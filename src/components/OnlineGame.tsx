@@ -4,10 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Board, { Token } from "./Board";
+import Avatar from "./Avatar";
+import AvatarPicker from "./AvatarPicker";
 import Dice from "./Dice";
-import { PLAYER_COLORS, rollDie } from "@/lib/game";
-import { LastMove, RoomState, ServerInfo, SLIDE_MS, SLIDE_PAUSE_MS, STEP_MS } from "@/lib/online";
-import { getPlayerId, getSavedName, getSocket, saveName } from "@/lib/socket";
+import { PLAYER_COLORS } from "@/lib/game";
+import { DICE_ROLL_MS, LastMove, RoomState, ServerInfo, SLIDE_MS, SLIDE_PAUSE_MS, STEP_MS } from "@/lib/online";
+import { avatarSeed, randomSalt } from "@/lib/avatar";
+import { getPlayerId, getSavedName, getSavedSalt, getSocket, saveName, saveSalt } from "@/lib/socket";
 
 // Hidden tabs throttle timers, which would make moves pile up; skip the animation there instead.
 const sleep = (ms: number) =>
@@ -19,13 +22,14 @@ export default function OnlineGame({ code }: { code: string }) {
   // Rendered client-only (see the room page), so browser storage is safe to read here.
   const [name, setName] = useState(getSavedName);
   const [nameDraft, setNameDraft] = useState("");
+  const [salt, setSalt] = useState(getSavedSalt);
   const [room, setRoom] = useState<RoomState | null>(null);
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(true);
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [display, setDisplay] = useState<Record<string, number>>({});
   const [dice, setDice] = useState(1);
-  const [rolling, setRolling] = useState(false);
+  const [rollId, setRollId] = useState(0);
   const [animating, setAnimating] = useState(false);
   const [rollPending, setRollPending] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -41,13 +45,9 @@ export default function OnlineGame({ code }: { code: string }) {
 
   const animate = useCallback(async (mv: LastMove) => {
     setAnimating(true);
-    setRolling(true);
-    for (let i = 0; i < 8; i++) {
-      setDice(rollDie());
-      await sleep(70);
-    }
     setDice(mv.roll);
-    setRolling(false);
+    setRollId((n) => n + 1);
+    await sleep(DICE_ROLL_MS);
     for (let pos = mv.from + 1; pos <= mv.landed && mv.landed !== mv.from; pos++) {
       setDisplay((d) => ({ ...d, [mv.playerId]: pos }));
       await sleep(STEP_MS);
@@ -70,7 +70,7 @@ export default function OnlineGame({ code }: { code: string }) {
     const socket = getSocket();
 
     const join = () =>
-      socket.emit("room:join", { code, name, playerId: myId }, (res: AckRes & { info?: ServerInfo }) => {
+      socket.emit("room:join", { code, name, avatar: avatarSeed(name, salt), playerId: myId }, (res: AckRes & { info?: ServerInfo }) => {
         if (!res.ok) setError(res.error);
         else if (res.info) setInfo(res.info);
       });
@@ -110,7 +110,7 @@ export default function OnlineGame({ code }: { code: string }) {
       socket.off("disconnect", onDisconnect);
       socket.off("room:state", onState);
     };
-  }, [code, name, myId, animate]);
+  }, [code, name, salt, myId, animate]);
 
   const me = room?.players.find((p) => p.id === myId);
   const current = room?.players[room.currentIndex];
@@ -184,14 +184,25 @@ export default function OnlineGame({ code }: { code: string }) {
       >
         <h2 className="mb-1 text-xl font-bold text-slate-800">Join room {code}</h2>
         <p className="mb-4 text-sm text-slate-500">Pick a name the other players will see.</p>
-        <input
-          autoFocus
-          value={nameDraft}
-          onChange={(e) => setNameDraft(e.target.value)}
-          maxLength={16}
-          placeholder="Your name"
-          className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 outline-none focus:border-emerald-500"
-        />
+        <div className="mb-4 flex items-center gap-3">
+          <AvatarPicker
+            name={nameDraft}
+            salt={salt}
+            onReroll={() => {
+              const next = randomSalt();
+              setSalt(next);
+              saveSalt(next);
+            }}
+          />
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            maxLength={16}
+            placeholder="Your name"
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 outline-none focus:border-emerald-500"
+          />
+        </div>
         <button className="w-full rounded-xl bg-emerald-600 py-3 font-bold text-white hover:bg-emerald-700">
           Join
         </button>
@@ -224,10 +235,9 @@ export default function OnlineGame({ code }: { code: string }) {
           } ${p.connected ? "" : "opacity-40"}`}
         >
           <span className="flex items-center gap-2 text-slate-700">
-            <span
-              className="h-4 w-4 rounded-full border-2"
-              style={{ background: PLAYER_COLORS[p.colorIndex].fill, borderColor: PLAYER_COLORS[p.colorIndex].ring }}
-            />
+            <span className="rounded-full border-2" style={{ borderColor: PLAYER_COLORS[p.colorIndex].fill }}>
+              <Avatar seed={p.avatar} className="h-7 w-7" />
+            </span>
             {p.name}
             {p.id === myId && <span className="text-xs text-emerald-600">(you)</span>}
             {p.id === room.hostId && <span className="text-xs text-amber-600">★ host</span>}
@@ -288,6 +298,7 @@ export default function OnlineGame({ code }: { code: string }) {
     id: p.id,
     name: p.name,
     color: PLAYER_COLORS[p.colorIndex],
+    avatar: p.avatar,
     position: display[p.id] ?? p.position,
   }));
   const winner = room.status === "finished" && !animating ? room.players.find((p) => p.id === room.winnerId) : null;
@@ -304,20 +315,28 @@ export default function OnlineGame({ code }: { code: string }) {
           {banner}
           {winner ? (
             <div className="text-center">
-              <p className="text-4xl">🏆</p>
+              <div className="relative mx-auto w-fit">
+                <Avatar seed={winner.avatar} className="h-20 w-20" />
+                <span className="absolute -right-3 -top-3 text-3xl">🏆</span>
+              </div>
               <p className="mt-2 text-2xl font-bold" style={{ color: PLAYER_COLORS[winner.colorIndex].ring }}>
                 {winner.id === myId ? "You win!" : `${winner.name} wins!`}
               </p>
             </div>
           ) : (
-            <p className="text-center text-lg font-semibold text-slate-700">
+            <p className="flex items-center justify-center gap-2 text-lg font-semibold text-slate-700">
               {mover ? (
                 <>
-                  <span style={{ color: PLAYER_COLORS[mover.colorIndex].fill }}>●</span> {mover.name} is moving…
+                  <span className="rounded-full border-2" style={{ borderColor: PLAYER_COLORS[mover.colorIndex].fill }}>
+                    <Avatar seed={mover.avatar} className="h-8 w-8" />
+                  </span>
+                  {mover.name} is moving…
                 </>
               ) : current ? (
                 <>
-                  <span style={{ color: PLAYER_COLORS[current.colorIndex].fill }}>●</span>{" "}
+                  <span className="rounded-full border-2" style={{ borderColor: PLAYER_COLORS[current.colorIndex].fill }}>
+                    <Avatar seed={current.avatar} className="h-8 w-8" />
+                  </span>
                   {current.id === myId ? "Your turn!" : `${current.name}'s turn`}
                 </>
               ) : null}
@@ -325,7 +344,7 @@ export default function OnlineGame({ code }: { code: string }) {
           )}
 
           <div className="my-4 flex justify-center">
-            <Dice value={dice} rolling={rolling} />
+            <Dice value={dice} rollId={rollId} />
           </div>
 
           {winner ? (

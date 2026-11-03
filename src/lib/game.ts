@@ -37,6 +37,7 @@ export type Player = {
   color: (typeof PLAYER_COLORS)[number];
   position: number; // 0 = off the board, 1..100 on the board
   isComputer: boolean;
+  avatar: string; // seed for <Avatar>
 };
 
 /** Grid coordinates for a square, with row 0 at the bottom and rows snaking back and forth. */

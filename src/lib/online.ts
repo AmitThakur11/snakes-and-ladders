@@ -3,13 +3,13 @@
 export const MAX_PLAYERS = 4;
 
 // Client animation timings. The server waits this long before accepting the next roll.
-export const DICE_SHAKE_MS = 560;
+export const DICE_ROLL_MS = 900;
 export const STEP_MS = 220;
 export const SLIDE_PAUSE_MS = 250;
 export const SLIDE_MS = 500;
 
 export function moveDuration(from: number, landed: number, final: number): number {
-  let ms = DICE_SHAKE_MS + Math.max(0, landed - from) * STEP_MS;
+  let ms = DICE_ROLL_MS + Math.max(0, landed - from) * STEP_MS;
   if (final !== landed) ms += SLIDE_PAUSE_MS + SLIDE_MS;
   return ms;
 }
@@ -17,6 +17,7 @@ export function moveDuration(from: number, landed: number, final: number): numbe
 export type OnlinePlayer = {
   id: string;
   name: string;
+  avatar: string; // seed for <Avatar>
   colorIndex: number;
   position: number;
   connected: boolean;

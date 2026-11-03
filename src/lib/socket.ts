@@ -44,3 +44,13 @@ export function getPlayerId(): string {
 
 export const getSavedName = () => stored("snl.name") ?? "";
 export const saveName = (name: string) => store("snl.name", name);
+
+/** Avatar salt for this browser (see lib/avatar); made on first use and kept until re-rolled. */
+export function getSavedSalt(): number {
+  const n = Number(stored("snl.avatarSalt"));
+  if (Number.isInteger(n) && n > 0) return n;
+  const salt = Math.floor(Math.random() * 1e6) + 1;
+  store("snl.avatarSalt", String(salt));
+  return salt;
+}
+export const saveSalt = (salt: number) => store("snl.avatarSalt", String(salt));

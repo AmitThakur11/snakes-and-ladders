@@ -2,11 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getPlayerId, getSavedName, getSocket, saveName } from "@/lib/socket";
+import AvatarPicker from "./AvatarPicker";
+import { randomSalt } from "@/lib/avatar";
+import { getPlayerId, getSavedName, getSavedSalt, getSocket, saveName, saveSalt } from "@/lib/socket";
 
 export default function OnlineMenu() {
   const router = useRouter();
   const [name, setName] = useState(getSavedName);
+  const [salt, setSalt] = useState(getSavedSalt);
+  const reroll = () => {
+    const next = randomSalt();
+    setSalt(next);
+    saveSalt(next);
+  };
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -40,16 +48,19 @@ export default function OnlineMenu() {
       <p className="mb-5 text-sm text-slate-500">Create a room and share the code with friends on other devices.</p>
 
       <label className="mb-1 block text-sm font-medium text-slate-600">Your name</label>
-      <input
-        value={name}
-        onChange={(e) => {
-          setName(e.target.value);
-          setError("");
-        }}
-        maxLength={16}
-        placeholder="e.g. Sam"
-        className="mb-5 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 outline-none focus:border-emerald-500"
-      />
+      <div className="mb-5 flex items-center gap-3">
+        <AvatarPicker name={name} salt={salt} onReroll={reroll} />
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setError("");
+          }}
+          maxLength={16}
+          placeholder="e.g. Sam"
+          className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 outline-none focus:border-emerald-500"
+        />
+      </div>
 
       <button
         onClick={create}

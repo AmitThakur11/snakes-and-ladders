@@ -2,18 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Board from "./Board";
+import Avatar from "./Avatar";
 import Dice from "./Dice";
 import { BOARD_SIZE, LADDERS, PLAYER_COLORS, Player, SNAKES, rollDie } from "@/lib/game";
+import { DICE_ROLL_MS } from "@/lib/online";
+import { avatarSeed, randomSalt } from "@/lib/avatar";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type SetupEntry = { name: string; isComputer: boolean };
+// `salt` picks the avatar for a name; re-rolling it draws a new face.
+type SetupEntry = { name: string; isComputer: boolean; salt: number };
 
 const DEFAULT_SETUP: SetupEntry[] = [
-  { name: "Player 1", isComputer: false },
-  { name: "Computer", isComputer: true },
-  { name: "Player 3", isComputer: false },
-  { name: "Player 4", isComputer: false },
+  { name: "Player 1", isComputer: false, salt: 1 },
+  { name: "Computer", isComputer: true, salt: 2 },
+  { name: "Player 3", isComputer: false, salt: 3 },
+  { name: "Player 4", isComputer: false, salt: 4 },
 ];
 
 export default function Game() {
@@ -22,7 +26,7 @@ export default function Game() {
   const [players, setPlayers] = useState<Player[] | null>(null);
   const [current, setCurrent] = useState(0);
   const [dice, setDice] = useState(1);
-  const [rolling, setRolling] = useState(false);
+  const [rollId, setRollId] = useState(0);
   const [busy, setBusy] = useState(false);
   const [winner, setWinner] = useState<Player | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -42,6 +46,7 @@ export default function Game() {
       color: PLAYER_COLORS[i],
       position: 0,
       isComputer: s.isComputer,
+      avatar: avatarSeed(s.name.trim() || `Player ${i + 1}`, s.salt),
     }));
     playersRef.current = ps;
     setPlayers(ps);
@@ -55,15 +60,11 @@ export default function Game() {
     if (busy || winner || !playersRef.current.length) return;
     setBusy(true);
 
-    // Dice animation
-    setRolling(true);
-    for (let i = 0; i < 8; i++) {
-      setDice(rollDie());
-      await sleep(70);
-    }
+    // The die tumbles and lands on the roll before the token moves.
     const roll = rollDie();
     setDice(roll);
-    setRolling(false);
+    setRollId((n) => n + 1);
+    await sleep(DICE_ROLL_MS);
 
     const player = playersRef.current[current];
     const start = player.position;
@@ -151,10 +152,17 @@ export default function Game() {
         <div className="space-y-3">
           {setup.slice(0, playerCount).map((s, i) => (
             <div key={i} className="flex items-center gap-2">
-              <span
-                className="h-6 w-6 shrink-0 rounded-full border-2"
-                style={{ background: PLAYER_COLORS[i].fill, borderColor: PLAYER_COLORS[i].ring }}
-              />
+              <button
+                type="button"
+                onClick={() => setSetup((prev) => prev.map((p, j) => (j === i ? { ...p, salt: randomSalt() } : p)))}
+                className="relative shrink-0 rounded-full border-[3px] transition hover:scale-105"
+                style={{ borderColor: PLAYER_COLORS[i].fill }}
+                title="New avatar"
+                aria-label={`New avatar for ${s.name || `player ${i + 1}`}`}
+              >
+                <Avatar seed={avatarSeed(s.name || `Player ${i + 1}`, s.salt)} className="h-10 w-10" />
+                <span className="absolute -bottom-1 -right-1 rounded-full bg-white px-0.5 text-[10px] leading-4 shadow">🎲</span>
+              </button>
               <input
                 value={s.name}
                 onChange={(e) =>
@@ -201,19 +209,25 @@ export default function Game() {
         <div className="rounded-2xl bg-white/90 p-5 shadow-xl">
           {winner ? (
             <div className="text-center">
-              <p className="text-4xl">🏆</p>
+              <div className="relative mx-auto w-fit">
+                <Avatar seed={winner.avatar} className="h-20 w-20" />
+                <span className="absolute -right-3 -top-3 text-3xl">🏆</span>
+              </div>
               <p className="mt-2 text-2xl font-bold" style={{ color: winner.color.ring }}>
                 {winner.name} wins!
               </p>
             </div>
           ) : (
-            <p className="text-center text-lg font-semibold text-slate-700">
-              <span style={{ color: active.color.fill }}>●</span> {active.name}&apos;s turn
+            <p className="flex items-center justify-center gap-2 text-lg font-semibold text-slate-700">
+              <span className="rounded-full border-2" style={{ borderColor: active.color.fill }}>
+                <Avatar seed={active.avatar} className="h-8 w-8" />
+              </span>
+              {active.name}&apos;s turn
             </p>
           )}
 
           <div className="my-4 flex justify-center">
-            <Dice value={dice} rolling={rolling} />
+            <Dice value={dice} rollId={rollId} />
           </div>
 
           {winner ? (
@@ -253,10 +267,9 @@ export default function Game() {
                 }`}
               >
                 <span className="flex items-center gap-2 text-slate-700">
-                  <span
-                    className="h-4 w-4 rounded-full border-2"
-                    style={{ background: p.color.fill, borderColor: p.color.ring }}
-                  />
+                  <span className="rounded-full border-2" style={{ borderColor: p.color.fill }}>
+                    <Avatar seed={p.avatar} className="h-7 w-7" />
+                  </span>
                   {p.name} {p.isComputer && <span className="text-xs text-slate-400">(CPU)</span>}
                 </span>
                 <span className="font-mono text-sm text-slate-500">{p.position || "start"}</span>

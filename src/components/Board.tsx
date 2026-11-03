@@ -1,8 +1,12 @@
+import Avatar from "./Avatar";
 import { LADDERS, Player, SNAKES, squareCenter, squareToCoords } from "@/lib/game";
 
 const CELL_COLORS = ["#fef3c7", "#fde68a", "#fed7aa", "#fecaca", "#e9d5ff", "#bfdbfe", "#bbf7d0"];
 
-function snakePath(from: number, to: number): string {
+type Pt = { x: number; y: number };
+
+/** Points along a wavy centreline from head (index 0) to tail. */
+function snakeSpine(from: number, to: number): Pt[] {
   const a = squareCenter(from);
   const b = squareCenter(to);
   const dx = b.x - a.x;
@@ -12,15 +16,35 @@ function snakePath(from: number, to: number): string {
   const ny = dx / len;
   const waves = Math.max(2, Math.round(len / 14));
   const amp = 3;
-  const steps = 40;
-  let d = `M ${a.x} ${a.y}`;
-  for (let i = 1; i <= steps; i++) {
+  const steps = 60;
+  return Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
     // taper the wiggle near both ends so head and tail sit on their squares
     const w = Math.sin(t * Math.PI * waves) * amp * Math.sin(t * Math.PI);
-    d += ` L ${a.x + dx * t + nx * w} ${a.y + dy * t + ny * w}`;
-  }
-  return d;
+    return { x: a.x + dx * t + nx * w, y: a.y + dy * t + ny * w };
+  });
+}
+
+const toPath = (pts: Pt[]) => pts.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+
+/** Closed outline of a body that is full width at the head and narrows to a sharp tail. */
+function snakeBody(spine: Pt[], halfWidth: number): string {
+  const n = spine.length - 1;
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  spine.forEach((p, i) => {
+    const prev = spine[Math.max(0, i - 1)];
+    const next = spine[Math.min(n, i + 1)];
+    const tx = next.x - prev.x;
+    const ty = next.y - prev.y;
+    const tl = Math.hypot(tx, ty) || 1;
+    const t = i / n;
+    // full width for the first ~55%, then taper to a point
+    const w = halfWidth * Math.pow(Math.min(1, (1 - t) / 0.45), 0.85);
+    left.push({ x: p.x - (ty / tl) * w, y: p.y + (tx / tl) * w });
+    right.push({ x: p.x + (ty / tl) * w, y: p.y - (tx / tl) * w });
+  });
+  return `${toPath([...left, ...right.reverse()])} Z`;
 }
 
 // Each snake gets one of the illustrated faces in public/snakes, with body colours to match it.
@@ -39,12 +63,13 @@ const HEAD_SIZE = 9; // board units (one square is 10)
 
 function Snake({ from, to, skin }: { from: number; to: number; skin: (typeof SNAKE_SKINS)[number] }) {
   const head = squareCenter(from);
-  const d = snakePath(from, to);
+  const spine = snakeSpine(from, to);
+  // the pattern stripe stops before the tail gets too thin to hold it
+  const stripe = toPath(spine.slice(0, Math.round(spine.length * 0.8)));
   return (
     <g>
-      <path d={d} stroke={skin.dark} strokeWidth={3.8} fill="none" strokeLinecap="round" />
-      <path d={d} stroke={skin.main} strokeWidth={2.8} fill="none" strokeLinecap="round" />
-      <path d={d} stroke={skin.light} strokeWidth={1} strokeDasharray="1.2 1.6" fill="none" strokeLinecap="round" />
+      <path d={snakeBody(spine, 1.5)} fill={skin.main} stroke={skin.dark} strokeWidth={0.5} strokeLinejoin="miter" strokeMiterlimit={20} />
+      <path d={stripe} stroke={skin.light} strokeWidth={1} strokeDasharray="1.2 1.6" fill="none" strokeLinecap="round" />
       <image
         href={`/snakes/${skin.face}.webp`}
         x={head.x - HEAD_SIZE / 2}
@@ -57,30 +82,84 @@ function Snake({ from, to, skin }: { from: number; to: number; skin: (typeof SNA
   );
 }
 
+const WOOD = { edge: "#4a2a0e", base: "#a8692c", grain: "#d9a35f" };
+
 function Ladder({ from, to }: { from: number; to: number }) {
   const a = squareCenter(from);
   const b = squareCenter(to);
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len = Math.hypot(dx, dy);
-  const nx = (-dy / len) * 1.8;
-  const ny = (dx / len) * 1.8;
-  const rungs = Math.max(2, Math.floor(len / 4));
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const ux = (b.x - a.x) / len;
+  const uy = (b.y - a.y) / len;
+  const gap = 2; // half the distance between the rails
+  const nx = -uy * gap;
+  const ny = ux * gap;
+  // rails run a little past both squares' centres
+  const over = 1.6;
+  const s = { x: a.x - ux * over, y: a.y - uy * over };
+  const e = { x: b.x + ux * over, y: b.y + uy * over };
+  const rungs = Math.max(2, Math.round(len / 3.2));
+
+  const rail = (side: 1 | -1, key: string) => {
+    const x1 = s.x + nx * side;
+    const y1 = s.y + ny * side;
+    const x2 = e.x + nx * side;
+    const y2 = e.y + ny * side;
+    return (
+      <g key={key} strokeLinecap="round">
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={WOOD.edge} strokeWidth={1.35} />
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={WOOD.base} strokeWidth={0.85} />
+        <line
+          x1={x1 - nx * 0.08}
+          y1={y1 - ny * 0.08}
+          x2={x2 - nx * 0.08}
+          y2={y2 - ny * 0.08}
+          stroke={WOOD.grain}
+          strokeWidth={0.22}
+          strokeDasharray="4 1.2 2 0.8"
+        />
+      </g>
+    );
+  };
+
+  const steps = Array.from({ length: rungs }, (_, i) => {
+    const d = over + ((i + 0.5) / rungs) * len;
+    return { x: s.x + ux * d, y: s.y + uy * d };
+  });
+
+  const body = (
+    <>
+      {steps.map((c, i) => (
+        <g key={`r${i}`} strokeLinecap="round">
+          <line x1={c.x + nx * 1.1} y1={c.y + ny * 1.1} x2={c.x - nx * 1.1} y2={c.y - ny * 1.1} stroke={WOOD.edge} strokeWidth={1.05} />
+          <line x1={c.x + nx * 1.1} y1={c.y + ny * 1.1} x2={c.x - nx * 1.1} y2={c.y - ny * 1.1} stroke={WOOD.base} strokeWidth={0.6} />
+        </g>
+      ))}
+      {rail(1, "left")}
+      {rail(-1, "right")}
+      {steps.map((c, i) => (
+        <g key={`p${i}`} fill={WOOD.edge}>
+          <circle cx={c.x + nx} cy={c.y + ny} r={0.22} />
+          <circle cx={c.x - nx} cy={c.y - ny} r={0.22} />
+        </g>
+      ))}
+    </>
+  );
+
   return (
-    <g stroke="#78350f" strokeLinecap="round">
-      <line x1={a.x + nx} y1={a.y + ny} x2={b.x + nx} y2={b.y + ny} strokeWidth={1.1} />
-      <line x1={a.x - nx} y1={a.y - ny} x2={b.x - nx} y2={b.y - ny} strokeWidth={1.1} />
-      {Array.from({ length: rungs }, (_, i) => {
-        const t = (i + 0.5) / rungs;
-        const cx = a.x + dx * t;
-        const cy = a.y + dy * t;
-        return <line key={i} x1={cx + nx} y1={cy + ny} x2={cx - nx} y2={cy - ny} strokeWidth={0.7} stroke="#b45309" />;
-      })}
+    <g>
+      <g transform="translate(0.45 0.6)" opacity={0.22} style={{ filter: "blur(0.35px)" }}>
+        <line x1={s.x + nx} y1={s.y + ny} x2={e.x + nx} y2={e.y + ny} stroke="#000" strokeWidth={1.4} strokeLinecap="round" />
+        <line x1={s.x - nx} y1={s.y - ny} x2={e.x - nx} y2={e.y - ny} stroke="#000" strokeWidth={1.4} strokeLinecap="round" />
+        {steps.map((c, i) => (
+          <line key={i} x1={c.x + nx} y1={c.y + ny} x2={c.x - nx} y2={c.y - ny} stroke="#000" strokeWidth={1} />
+        ))}
+      </g>
+      {body}
     </g>
   );
 }
 
-export type Token = Pick<Player, "name" | "color" | "position"> & { id: number | string };
+export type Token = Pick<Player, "name" | "color" | "position" | "avatar"> & { id: number | string };
 
 export default function Board({ players, currentId }: { players: Token[]; currentId: number | string | null }) {
   const cells = Array.from({ length: 100 }, (_, i) => i + 1);
@@ -129,18 +208,18 @@ export default function Board({ players, currentId }: { players: Token[]; curren
           return (
             <div
               key={p.id}
-              className={`absolute z-10 flex h-[5.5%] w-[5.5%] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 text-[clamp(8px,1.4vw,12px)] font-bold text-white shadow-md transition-all duration-300 ease-out ${
-                p.id === currentId ? "ring-4 ring-white/80" : ""
+              className={`absolute z-10 h-[6.5%] w-[6.5%] -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] shadow-md transition-all duration-300 ease-out ${
+                p.id === currentId ? "z-20 ring-4 ring-white/80" : ""
               }`}
               style={{
                 left: `${x + ox}%`,
                 top: `${y + oy}%`,
                 background: p.color.fill,
-                borderColor: p.color.ring,
+                borderColor: p.color.fill,
               }}
               title={p.name}
             >
-              {p.name[0]?.toUpperCase()}
+              <Avatar seed={p.avatar} className="h-full w-full" />
             </div>
           );
         })}

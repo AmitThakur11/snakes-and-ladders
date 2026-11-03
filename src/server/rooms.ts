@@ -1,5 +1,6 @@
 import type { Server, Socket } from "socket.io";
 import { BOARD_SIZE, LADDERS, SNAKES, rollDie } from "../lib/game";
+import { cleanAvatar } from "../lib/avatar";
 import { Ack, MAX_PLAYERS, OnlinePlayer, RoomState, ServerInfo, moveDuration } from "../lib/online";
 
 type ServerPlayer = OnlinePlayer & { socketId: string | null };
@@ -40,6 +41,7 @@ function toState(room: Room): RoomState {
     players: room.players.map((p) => ({
       id: p.id,
       name: p.name,
+      avatar: p.avatar,
       colorIndex: p.colorIndex,
       position: p.position,
       connected: p.connected,
@@ -154,7 +156,7 @@ export function registerRoomHandlers(io: Server, info: ServerInfo) {
       ack({ ok: true, code });
     });
 
-    socket.on("room:join", (payload: { code?: unknown; name?: unknown; playerId?: unknown }, ack: Ack<{ info: ServerInfo }>) => {
+    socket.on("room:join", (payload: { code?: unknown; name?: unknown; avatar?: unknown; playerId?: unknown }, ack: Ack<{ info: ServerInfo }>) => {
       const playerId = cleanId(payload?.playerId);
       const code = typeof payload?.code === "string" ? payload.code.toUpperCase() : "";
       const room = rooms.get(code);
@@ -167,13 +169,24 @@ export function registerRoomHandlers(io: Server, info: ServerInfo) {
       if (player) {
         player.connected = true;
         player.socketId = socket.id;
-        if (room.status === "lobby") player.name = cleanName(payload?.name);
+        if (room.status === "lobby") {
+          player.name = cleanName(payload?.name);
+          player.avatar = cleanAvatar(payload?.avatar);
+        }
       } else {
         if (room.status !== "lobby") return ack({ ok: false, error: "That game has already started." });
         if (room.players.length >= MAX_PLAYERS) return ack({ ok: false, error: "Room is full (4 players max)." });
         const used = new Set(room.players.map((p) => p.colorIndex));
         const colorIndex = [0, 1, 2, 3].find((c) => !used.has(c))!;
-        player = { id: playerId, name: cleanName(payload?.name), colorIndex, position: 0, connected: true, socketId: socket.id };
+        player = {
+          id: playerId,
+          name: cleanName(payload?.name),
+          avatar: cleanAvatar(payload?.avatar),
+          colorIndex,
+          position: 0,
+          connected: true,
+          socketId: socket.id,
+        };
         room.players.push(player);
       }
       if (!room.players.some((p) => p.id === room.hostId && p.connected)) room.hostId = playerId;

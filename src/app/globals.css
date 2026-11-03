@@ -11,14 +11,53 @@ body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
-@keyframes dice-shake {
-  0% { transform: rotate(0deg) scale(1); }
-  25% { transform: rotate(-15deg) scale(1.08); }
-  50% { transform: rotate(12deg) scale(0.95); }
-  75% { transform: rotate(-8deg) scale(1.05); }
-  100% { transform: rotate(0deg) scale(1); }
+/* Die: hop up, fall, and do two small bounces while it tumbles (see Dice.tsx). */
+@keyframes dice-hop {
+  0% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-46px) scale(1.06); }
+  58% { transform: translateY(0) scale(1); }
+  68% { transform: translateY(-12px); }
+  78% { transform: translateY(0); }
+  86% { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
+}
+.dice-hop-a,
+.dice-hop-b {
+  animation-name: dice-hop;
+  animation-timing-function: ease-in-out;
+}
+/* same motion under a different name, so switching class restarts it */
+.dice-hop-b { animation-name: dice-hop-again; }
+@keyframes dice-hop-again {
+  0% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-46px) scale(1.06); }
+  58% { transform: translateY(0) scale(1); }
+  68% { transform: translateY(-12px); }
+  78% { transform: translateY(0); }
+  86% { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
 }
 
-.animate-dice {
-  animation: dice-shake 0.28s ease-in-out infinite;
+.dice-shadow {
+  margin-top: 10px;
+  height: 10px;
+  width: 64px;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgb(15 23 42 / 0.35), transparent);
+}
+@keyframes dice-shadow {
+  0%, 58%, 78%, 100% { transform: scaleX(1); opacity: 1; }
+  30% { transform: scaleX(0.55); opacity: 0.45; }
+  68% { transform: scaleX(0.85); opacity: 0.8; }
+}
+@keyframes dice-shadow-again {
+  0%, 58%, 78%, 100% { transform: scaleX(1); opacity: 1; }
+  30% { transform: scaleX(0.55); opacity: 0.45; }
+  68% { transform: scaleX(0.85); opacity: 0.8; }
+}
+.dice-hop-a-shadow { animation-name: dice-shadow; animation-timing-function: ease-in-out; }
+.dice-hop-b-shadow { animation-name: dice-shadow-again; animation-timing-function: ease-in-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dice-hop-a, .dice-hop-b, .dice-hop-a-shadow, .dice-hop-b-shadow { animation: none; }
 }
