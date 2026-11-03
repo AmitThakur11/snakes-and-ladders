@@ -1,13 +1,16 @@
-# Render Blueprint: one free web service running the Next.js app + Socket.IO server.
+# Render Blueprint: the Socket.IO game server only (the frontend is hosted on Vercel).
 # Deploy: Render dashboard → New → Blueprint → pick this repo.
 services:
   - type: web
-    name: snakes-and-ladders
+    name: snakes-and-ladders-server
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    buildCommand: npm ci
+    startCommand: npm run start:socket
     healthCheckPath: /
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Your Vercel URL(s), comma-separated, e.g. https://snakes-and-ladders.vercel.app
+      - key: ALLOWED_ORIGINS
+        sync: false

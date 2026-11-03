@@ -4,8 +4,12 @@ import { io, Socket } from "socket.io-client";
 
 let socket: Socket | null = null;
 
+// Set NEXT_PUBLIC_SOCKET_URL when the game server is hosted separately (e.g. on Render);
+// otherwise connect to the same server that served the page.
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+
 export function getSocket(): Socket {
-  if (!socket) socket = io();
+  if (!socket) socket = SOCKET_URL ? io(SOCKET_URL) : io();
   return socket;
 }
 
