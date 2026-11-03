@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: linear-gradient(135deg, #065f46 0%, #0e7490 50%, #4338ca 100%);
+  background-attachment: fixed;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+@keyframes dice-shake {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(-15deg) scale(1.08); }
+  50% { transform: rotate(12deg) scale(0.95); }
+  75% { transform: rotate(-8deg) scale(1.05); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+
+.animate-dice {
+  animation: dice-shake 0.28s ease-in-out infinite;
+}

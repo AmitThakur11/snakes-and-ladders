@@ -1,0 +1,13 @@
+# Render Blueprint: one free web service running the Next.js app + Socket.IO server.
+# Deploy: Render dashboard → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: snakes-and-ladders
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
