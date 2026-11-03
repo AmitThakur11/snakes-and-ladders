@@ -28,7 +28,7 @@ export type LastMove = {
   playerId: string;
   roll: number;
   from: number;
-  landed: number; // square reached by the roll (same as `from` if the roll overshot 100)
+  landed: number; // square reached by the roll (same as `from` if the roll overshot the last square)
   final: number; // square after any snake or ladder
 };
 

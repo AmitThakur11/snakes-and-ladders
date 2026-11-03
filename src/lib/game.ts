@@ -1,27 +1,33 @@
-export const BOARD_SIZE = 100;
+export const GRID = 11; // squares per row
+export const BOARD_SIZE = GRID * GRID;
+const CELL = 100 / GRID; // one square in the board's 0..100 coordinate space
 
 // head -> tail
 export const SNAKES: Record<number, number> = {
-  17: 7,
-  49: 11,
-  54: 34,
-  62: 19,
-  87: 36,
-  93: 73,
-  95: 75,
-  98: 79,
+  28: 8,
+  39: 18,
+  52: 31,
+  61: 40,
+  77: 55,
+  86: 63,
+  98: 73,
+  105: 83,
+  114: 92,
+  119: 97,
 };
 
 // bottom -> top
 export const LADDERS: Record<number, number> = {
-  4: 14,
-  9: 31,
-  20: 38,
-  28: 84,
-  40: 59,
-  51: 67,
-  63: 81,
-  71: 91,
+  3: 24,
+  7: 29,
+  14: 35,
+  21: 44,
+  33: 56,
+  46: 68,
+  58: 80,
+  69: 91,
+  81: 102,
+  88: 110,
 };
 
 export const PLAYER_COLORS = [
@@ -35,7 +41,7 @@ export type Player = {
   id: number;
   name: string;
   color: (typeof PLAYER_COLORS)[number];
-  position: number; // 0 = off the board, 1..100 on the board
+  position: number; // 0 = off the board, 1..BOARD_SIZE on the board
   isComputer: boolean;
   avatar: string; // seed for <Avatar>
 };
@@ -43,9 +49,9 @@ export type Player = {
 /** Grid coordinates for a square, with row 0 at the bottom and rows snaking back and forth. */
 export function squareToCoords(square: number): { row: number; col: number } {
   const idx = square - 1;
-  const row = Math.floor(idx / 10);
-  const offset = idx % 10;
-  const col = row % 2 === 0 ? offset : 9 - offset;
+  const row = Math.floor(idx / GRID);
+  const offset = idx % GRID;
+  const col = row % 2 === 0 ? offset : GRID - 1 - offset;
   return { row, col };
 }
 
@@ -53,7 +59,7 @@ export function squareToCoords(square: number): { row: number; col: number } {
 export function squareCenter(square: number): { x: number; y: number } {
   if (square <= 0) return { x: -5, y: 95 };
   const { row, col } = squareToCoords(square);
-  return { x: col * 10 + 5, y: (9 - row) * 10 + 5 };
+  return { x: (col + 0.5) * CELL, y: (GRID - 1 - row + 0.5) * CELL };
 }
 
 export function rollDie(): number {

@@ -61,3 +61,33 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .dice-hop-a, .dice-hop-b, .dice-hop-a-shadow, .dice-hop-b-shadow { animation: none; }
 }
+
+/* Snake heads: a quick shake, then a rest (duration and delay vary per snake, see Board.tsx). */
+.snake-head {
+  transform-box: fill-box;
+  transform-origin: 50% 35%;
+  animation: snake-head 5s ease-in-out infinite;
+}
+@keyframes snake-head {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  66% { transform: rotate(-6deg); }
+  74% { transform: rotate(5deg); }
+  82% { transform: rotate(-3deg); }
+  90% { transform: rotate(0deg); }
+}
+
+/* Rattles: still most of the time, then a quick buzz. */
+.snake-rattle {
+  animation: snake-rattle 3.2s linear infinite;
+}
+@keyframes snake-rattle {
+  0%, 70%, 100% { transform: rotate(0deg); }
+  72%, 76%, 80%, 84%, 88% { transform: rotate(-9deg); }
+  74%, 78%, 82%, 86%, 90% { transform: rotate(9deg); }
+  92% { transform: rotate(0deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snake-head,
+  .snake-rattle { animation: none; }
+}

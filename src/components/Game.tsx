@@ -191,7 +191,7 @@ export default function Game() {
           Start game
         </button>
         <p className="mt-4 text-xs text-slate-500">
-          Roll a 6 for an extra turn. You need the exact number to land on 100.
+          Roll a 6 for an extra turn. You need the exact number to land on {BOARD_SIZE}.
         </p>
       </div>
     );
