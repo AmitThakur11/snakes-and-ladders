@@ -23,31 +23,35 @@ function snakePath(from: number, to: number): string {
   return d;
 }
 
-function Snake({ from, to, hue }: { from: number; to: number; hue: number }) {
+// Each snake gets one of the illustrated faces in public/snakes, with body colours to match it.
+const SNAKE_SKINS = [
+  { face: "01_green", dark: "#1f3d12", main: "#4d8a2a", light: "#c9d98a" },
+  { face: "04_red", dark: "#5c1408", main: "#c2381a", light: "#f59a6b" },
+  { face: "05_blue", dark: "#0f3550", main: "#2f7fb3", light: "#a9e0e8" },
+  { face: "10_yellow_black", dark: "#1a1206", main: "#e09a1c", light: "#2b1d08" },
+  { face: "06_purple", dark: "#231a33", main: "#5b4a78", light: "#a596c4" },
+  { face: "11_teal", dark: "#0d3b3a", main: "#24857f", light: "#9fd9cf" },
+  { face: "03_brown", dark: "#3a2a14", main: "#8a6a3a", light: "#e0c98f" },
+  { face: "08_gray", dark: "#2a2a2a", main: "#7a7a76", light: "#cfcfc9" },
+];
+
+const HEAD_SIZE = 9; // board units (one square is 10)
+
+function Snake({ from, to, skin }: { from: number; to: number; skin: (typeof SNAKE_SKINS)[number] }) {
   const head = squareCenter(from);
   const d = snakePath(from, to);
   return (
     <g>
-      <path d={d} stroke={`hsl(${hue} 70% 25%)`} strokeWidth={3.4} fill="none" strokeLinecap="round" />
-      <path d={d} stroke={`hsl(${hue} 75% 45%)`} strokeWidth={2.4} fill="none" strokeLinecap="round" />
-      <path
-        d={d}
-        stroke={`hsl(${hue} 80% 70%)`}
-        strokeWidth={0.9}
-        strokeDasharray="1.2 1.6"
-        fill="none"
-        strokeLinecap="round"
-      />
-      <circle cx={head.x} cy={head.y} r={2.6} fill={`hsl(${hue} 75% 40%)`} stroke={`hsl(${hue} 70% 20%)`} strokeWidth={0.5} />
-      <circle cx={head.x - 0.9} cy={head.y - 0.6} r={0.6} fill="white" />
-      <circle cx={head.x + 0.9} cy={head.y - 0.6} r={0.6} fill="white" />
-      <circle cx={head.x - 0.9} cy={head.y - 0.5} r={0.3} fill="black" />
-      <circle cx={head.x + 0.9} cy={head.y - 0.5} r={0.3} fill="black" />
-      <path
-        d={`M ${head.x} ${head.y + 1.8} l 0 1.2 l -0.5 0.6 M ${head.x} ${head.y + 3} l 0.5 0.6`}
-        stroke="#dc2626"
-        strokeWidth={0.35}
-        fill="none"
+      <path d={d} stroke={skin.dark} strokeWidth={3.8} fill="none" strokeLinecap="round" />
+      <path d={d} stroke={skin.main} strokeWidth={2.8} fill="none" strokeLinecap="round" />
+      <path d={d} stroke={skin.light} strokeWidth={1} strokeDasharray="1.2 1.6" fill="none" strokeLinecap="round" />
+      <image
+        href={`/snakes/${skin.face}.webp`}
+        x={head.x - HEAD_SIZE / 2}
+        y={head.y - HEAD_SIZE / 2}
+        width={HEAD_SIZE}
+        height={HEAD_SIZE}
+        style={{ filter: "drop-shadow(0 0.4px 0.6px rgb(0 0 0 / 0.5))" }}
       />
     </g>
   );
@@ -109,7 +113,7 @@ export default function Board({ players, currentId }: { players: Token[]; curren
           <Ladder key={`l${from}`} from={+from} to={to} />
         ))}
         {Object.entries(SNAKES).map(([from, to], i) => (
-          <Snake key={`s${from}`} from={+from} to={to} hue={[140, 0, 280, 30, 200, 330, 90, 50][i % 8]} />
+          <Snake key={`s${from}`} from={+from} to={to} skin={SNAKE_SKINS[i % SNAKE_SKINS.length]} />
         ))}
       </svg>
 
