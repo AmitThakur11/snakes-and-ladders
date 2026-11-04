@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 const DICE_SECTION_ID = "dice-controls";
 
+const noSubscribe = () => () => {};
+
 /** Fixed bottom-right ↓ shortcut; only while the board is up and dice is off-screen. */
 export default function JumpToDice() {
-  const [mounted, setMounted] = useState(false);
+  // true in the browser, false while server rendering (the portal needs document.body)
+  const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-
     const dice = document.getElementById(DICE_SECTION_ID);
     if (!dice) return;
 

@@ -171,7 +171,7 @@ function Dice({ value, rollId }: { value: number; rollId: number }) {
             width: SIZE,
             height: SIZE,
             transformStyle: "preserve-3d",
-            transform: transformOf(displayedRef.current),
+            // transform is set by the layout effect above, before the first paint
             overflow: "visible",
           }}
         >

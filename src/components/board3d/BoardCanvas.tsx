@@ -1,9 +1,8 @@
 "use client";
 
-import { Suspense, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { type RefObject, Suspense, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { ContactShadows, Html, OrbitControls, useAnimations, useGLTF } from "@react-three/drei";
-import { SkeletonUtils } from "three-stdlib";
+import { ContactShadows, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import {
   BOARD_SIZE,
@@ -24,9 +23,7 @@ const TOKEN_BODY_ARGS: [number, number, number, number] = [0.18, 0.2, 4, 12];
 const TOKEN_HEAD_ARGS: [number, number, number] = [0.18, 14, 14];
 const TOKEN_RING_ARGS: [number, number] = [0.38, 24];
 
-const SNAKE_MODEL = "/models/snake-quaternius.glb";
-
-/** Tint map for Quaternius snake materials (CC0). */
+/** Colours per snake, keyed by head square. */
 const SNAKE_SKINS: Record<
   number,
   { main: string; belly: string; accent: string; eye: string }
@@ -114,7 +111,7 @@ function Ladder3D({ from, to }: { from: number; to: number }) {
     const forward = end.clone().sub(start).normalize();
     const mid = start.clone().lerp(end, 0.5);
 
-    let side = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+    const side = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
     if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
     else side.normalize();
 
@@ -216,18 +213,29 @@ function snakeCurve(from: number, to: number, phase: number): THREE.CatmullRomCu
     const t = i / steps;
     const env = Math.sin(Math.min(1, t / 0.2) * (Math.PI / 2)) * Math.sin(t * Math.PI);
     const w = Math.sin(t * Math.PI * waves - phase) * amp * env;
-    const lift = 0.12 + Math.sin(t * Math.PI) * 0.05;
-    pts.push(new THREE.Vector3(a.x + dx * t + nx * w, lift, a.z + dz * t + nz * w));
+    // the whole body lies on the floor (just above the board surface)
+    pts.push(new THREE.Vector3(a.x + dx * t + nx * w, 0.13, a.z + dz * t + nz * w));
   }
   return new THREE.CatmullRomCurve3(pts);
 }
 
-/** Soft tapered body that links the GLB head to the tail square. */
-function createBodyTube(curve: THREE.CatmullRomCurve3, tubular = 48, radial = 8): THREE.BufferGeometry {
+/**
+ * Flattened, tapering body tube along the curve, lying on the board. Vertex colours give it
+ * bands of `main`/`accent` on top and a lighter `belly` underneath.
+ */
+function createBodyTube(
+  curve: THREE.CatmullRomCurve3,
+  skin: (typeof SNAKE_SKINS)[number],
+  tubular = 64,
+  radial = 10,
+): THREE.BufferGeometry {
   const frames = curve.computeFrenetFrames(tubular, false);
+  const length = curve.getLength();
+  const main = new THREE.Color(skin.main);
+  const accent = new THREE.Color(skin.accent);
+  const belly = new THREE.Color(skin.belly);
   const pos: number[] = [];
-  const nrm: number[] = [];
-  const uv: number[] = [];
+  const col: number[] = [];
   const idx: number[] = [];
 
   for (let i = 0; i <= tubular; i++) {
@@ -239,25 +247,25 @@ function createBodyTube(curve: THREE.CatmullRomCurve3, tubular = 48, radial = 8)
     if (back.lengthSq() < 1e-6) back = frames.normals[i].clone();
     const side = new THREE.Vector3().crossVectors(T, back).normalize();
 
-    // Leave room for the Quaternius mesh; tube is the sliding tail path
-    let radius: number;
-    if (t < 0.22) radius = 0.015;
-    else if (t < 0.38) radius = THREE.MathUtils.lerp(0.06, 0.12, (t - 0.22) / 0.16);
-    else radius = THREE.MathUtils.lerp(0.12, 0.02, Math.pow((t - 0.38) / 0.62, 1.05));
+    // slim neck under the head, fullest around a quarter of the way, then a long taper to the tail tip
+    const radius =
+      t < 0.25
+        ? THREE.MathUtils.lerp(0.085, 0.11, t / 0.25)
+        : THREE.MathUtils.lerp(0.11, 0.012, Math.pow((t - 0.25) / 0.75, 1.15));
+    const band = Math.floor(t * length * 2.6) % 2 === 1;
 
     for (let j = 0; j <= radial; j++) {
       const ang = (j / radial) * Math.PI * 2;
       const cos = Math.cos(ang);
       const sin = Math.sin(ang);
-      const rx = radius;
-      const ry = radius * 0.55;
-      const nx = cos * back.x + sin * side.x;
-      const ny = cos * back.y + sin * side.y;
-      const nz = cos * back.z + sin * side.z;
-      pos.push(p.x + cos * ry * back.x + sin * rx * side.x, p.y + cos * ry * back.y + sin * rx * side.y, p.z + cos * ry * back.z + sin * rx * side.z);
-      const nl = Math.hypot(nx, ny, nz) || 1;
-      nrm.push(nx / nl, ny / nl, nz / nl);
-      uv.push(t * 4, 0.5 - 0.5 * cos);
+      const ry = radius * 0.6; // flattened top-to-bottom
+      pos.push(
+        p.x + cos * ry * back.x + sin * radius * side.x,
+        p.y + cos * ry * back.y + sin * radius * side.y,
+        p.z + cos * ry * back.z + sin * radius * side.z,
+      );
+      const c = cos < -0.35 ? belly : band ? accent : main;
+      col.push(c.r, c.g, c.b);
     }
   }
   for (let i = 0; i < tubular; i++) {
@@ -269,42 +277,19 @@ function createBodyTube(curve: THREE.CatmullRomCurve3, tubular = 48, radial = 8)
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
-  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
 }
 
-function tintSnakeMaterials(
-  root: THREE.Object3D,
-  skin: (typeof SNAKE_SKINS)[number],
-) {
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    // Shadows on six snake meshes are a major multiplayer GPU cost — tokens keep casting.
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-    mesh.frustumCulled = true;
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    const next = mats.map((mat) => {
-      const m = (mat as THREE.MeshStandardMaterial).clone();
-      const name = (m.name || "").toLowerCase();
-      if (name.includes("darkgreen")) m.color.set(skin.main);
-      else if (name.includes("lightgreen")) m.color.set(skin.belly);
-      else if (name.includes("darkred")) m.color.set(skin.accent);
-      else if (name.includes("yellow") || name.includes("purple")) m.color.set(skin.eye);
-      m.roughness = 0.42;
-      m.metalness = 0.08;
-      m.needsUpdate = true;
-      return m;
-    });
-    mesh.material = next.length === 1 ? next[0]! : next;
-  });
-}
+const UNIT_SPHERE: [number, number, number] = [1, 20, 14];
 
-/** Quaternius CC0 snake (Poly Pizza) — real mesh head + body path for board play. */
+/**
+ * A cartoon snake lying flat on the board: striped body from head square to tail square, and a
+ * flattened head with googly eyes, rosy cheeks and a flicking forked tongue. The head sways a
+ * little and the pupils look around (driven by SnakeTicker).
+ */
 function Snake3D({
   from,
   to,
@@ -316,68 +301,123 @@ function Snake3D({
   skin: (typeof SNAKE_SKINS)[number];
   index: number;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const modelRef = useRef<THREE.Group>(null);
-  const { scene, animations } = useGLTF(SNAKE_MODEL);
-
-  const clone = useMemo(() => SkeletonUtils.clone(scene), [scene]);
-
-  useEffect(() => {
-    tintSnakeMaterials(clone, skin);
-  }, [clone, skin]);
-
-  const { actions } = useAnimations(animations, modelRef);
-
-  useEffect(() => {
-    const idle = actions["SnakeArmature|Snake_Idle"];
-    if (!idle) return;
-    idle.reset().setLoop(THREE.LoopRepeat, Infinity).play();
-    idle.timeScale = 0.85;
-    return () => {
-      idle.stop();
-    };
-  }, [actions]);
+  const headRef = useRef<THREE.Group>(null);
+  const tongueRef = useRef<THREE.Group>(null);
+  const pupilL = useRef<THREE.Mesh>(null);
+  const pupilR = useRef<THREE.Mesh>(null);
 
   const { bodyGeo, place } = useMemo(() => {
     const curve = snakeCurve(from, to, index * 1.37);
-    const bodyGeo = createBodyTube(curve);
-    const headPos = curve.getPointAt(0.04);
-    const tan = curve.getTangentAt(0.04).normalize();
-    // Face along the drop so the open jaws read toward lower squares
-    const face = new THREE.Vector3(tan.x, 0, tan.z);
+    const bodyGeo = createBodyTube(curve, skin);
+    const start = curve.getPointAt(0);
+    const tan = curve.getTangentAt(0.02);
+    // the head looks away from its own body
+    const face = new THREE.Vector3(-tan.x, 0, -tan.z);
     if (face.lengthSq() < 1e-6) face.set(0, 0, 1);
     else face.normalize();
     const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), face);
-    // Quaternius bind pose ~3.2 tall — sized to dominate each head square
-    const pathLen = curve.getLength();
-    const scale = THREE.MathUtils.clamp(0.55 + pathLen * 0.03, 0.62, 1.05);
-    return {
-      bodyGeo,
-      place: {
-        pos: [headPos.x, 0, headPos.z] as [number, number, number],
-        quat,
-        scale,
-      },
-    };
-  }, [from, to, index]);
+    return { bodyGeo, place: { pos: [start.x, 0.06, start.z] as [number, number, number], quat } };
+  }, [from, to, index, skin]);
+
+  useEffect(() => () => bodyGeo.dispose(), [bodyGeo]);
+
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime + index * 2.3;
+    if (headRef.current) headRef.current.rotation.y = Math.sin(t * 1.1) * 0.22;
+    // tongue: out-in flicks for ~0.6s every ~2.8s
+    const cycle = t % 2.8;
+    const flick = cycle < 0.6 ? Math.sin((cycle / 0.6) * Math.PI) : 0;
+    if (tongueRef.current) tongueRef.current.scale.set(1, 1, 0.001 + flick);
+    // pupils drift around inside the eyes
+    const lx = Math.sin(t * 0.7) * 0.022;
+    const lz = Math.cos(t * 0.9) * 0.018;
+    pupilL.current?.position.set(-0.085 + lx, 0.205, 0.165 + lz);
+    pupilR.current?.position.set(0.085 + lx, 0.205, 0.165 + lz);
+  });
+
+  const eye = (x: number, ref: RefObject<THREE.Mesh | null>) => (
+    <>
+      <mesh position={[x, 0.175, 0.13]} scale={0.072}>
+        <sphereGeometry args={UNIT_SPHERE} />
+        <meshStandardMaterial color="#ffffff" roughness={0.25} />
+      </mesh>
+      <mesh ref={ref} position={[x, 0.205, 0.165]} scale={0.036}>
+        <sphereGeometry args={UNIT_SPHERE} />
+        <meshStandardMaterial color="#111827" roughness={0.2} />
+      </mesh>
+    </>
+  );
 
   return (
-    <group ref={groupRef}>
+    <group>
       <mesh geometry={bodyGeo}>
-        <meshStandardMaterial color={skin.main} roughness={0.48} metalness={0.06} />
+        <meshStandardMaterial vertexColors roughness={0.5} metalness={0.05} />
       </mesh>
 
-      <group ref={modelRef} position={place.pos} quaternion={place.quat} scale={place.scale}>
-        <primitive object={clone} />
+      <group position={place.pos} quaternion={place.quat}>
+        <group ref={headRef}>
+          {/* flattened head resting on the board */}
+          <mesh position={[0, 0.07, 0.07]} scale={[0.2, 0.1, 0.25]}>
+            <sphereGeometry args={UNIT_SPHERE} />
+            <meshStandardMaterial color={skin.main} roughness={0.45} metalness={0.05} />
+          </mesh>
+          {/* lighter chin */}
+          <mesh position={[0, 0.04, 0.12]} scale={[0.15, 0.06, 0.18]}>
+            <sphereGeometry args={UNIT_SPHERE} />
+            <meshStandardMaterial color={skin.belly} roughness={0.55} />
+          </mesh>
+          {eye(-0.085, pupilL)}
+          {eye(0.085, pupilR)}
+          {/* rosy cheeks */}
+          {[-0.15, 0.15].map((x) => (
+            <mesh key={x} position={[x, 0.1, 0.17]} scale={[0.04, 0.02, 0.035]}>
+              <sphereGeometry args={UNIT_SPHERE} />
+              <meshStandardMaterial color="#f9a8d4" roughness={0.6} />
+            </mesh>
+          ))}
+          {/* nostrils */}
+          {[-0.035, 0.035].map((x) => (
+            <mesh key={x} position={[x, 0.135, 0.3]} scale={0.012}>
+              <sphereGeometry args={UNIT_SPHERE} />
+              <meshStandardMaterial color={skin.accent} />
+            </mesh>
+          ))}
+          {/* forked tongue, scaled along z to flick in and out */}
+          <group ref={tongueRef} position={[0, 0.05, 0.3]}>
+            <mesh position={[0, 0, 0.07]}>
+              <boxGeometry args={[0.022, 0.008, 0.14]} />
+              <meshStandardMaterial color="#e11d48" />
+            </mesh>
+            {[-1, 1].map((d) => (
+              <mesh key={d} position={[d * 0.016, 0, 0.16]} rotation={[0, d * 0.45, 0]}>
+                <boxGeometry args={[0.016, 0.008, 0.06]} />
+                <meshStandardMaterial color="#e11d48" />
+              </mesh>
+            ))}
+          </group>
+        </group>
       </group>
     </group>
   );
 }
 
+/**
+ * The canvas only draws on demand; while snakes are on the board this asks for ~20 frames a
+ * second so their heads, eyes and tongues can move. Skipped for reduced-motion users.
+ */
+function SnakeTicker() {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const id = window.setInterval(() => invalidate(), 50);
+    return () => window.clearInterval(id);
+  }, [invalidate]);
+  return null;
+}
+
 const Snake3DMemo = memo(Snake3D);
 const Ladder3DMemo = memo(Ladder3D);
 
-useGLTF.preload(SNAKE_MODEL);
 
 const Token3D = memo(function Token3D({
   token,
@@ -551,6 +591,7 @@ const StaticDecor = memo(function StaticDecor() {
       {Object.entries(LADDERS).map(([from, to]) => (
         <Ladder3DMemo key={`l${from}`} from={+from} to={to} />
       ))}
+      <SnakeTicker />
       <Suspense fallback={null}>
         {Object.entries(SNAKES).map(([from, to], i) => (
           <Snake3DMemo
@@ -580,7 +621,8 @@ function KickFrame() {
 /** Darken the mined square, then erupt lava columns — only while burstSquare is set. */
 function MineBlastFX({ square }: { square: number }) {
   const [x, , z] = squareToWorld(square);
-  const started = useRef(performance.now());
+  // set when the blast starts (effect below), not during render
+  const started = useRef(0);
   const darkRef = useRef<THREE.MeshStandardMaterial>(null);
   const lavaRef = useRef<THREE.MeshStandardMaterial>(null);
   const ringRef = useRef<THREE.MeshBasicMaterial>(null);

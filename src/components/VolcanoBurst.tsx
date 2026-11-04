@@ -24,7 +24,7 @@ export default function BlastHistory({
   /** Drop expired rows from parent state. */
   onExpire?: (remaining: BlastEvent[]) => void;
 }) {
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!events.length) return;
@@ -32,12 +32,12 @@ export default function BlastHistory({
       const cutoff = Date.now() - BLAST_HISTORY_MS;
       const remaining = events.filter((e) => e.createdAt > cutoff);
       if (remaining.length !== events.length) onExpire?.(remaining);
-      setTick((n) => n + 1);
+      setNow(Date.now());
     }, 400);
     return () => window.clearInterval(id);
   }, [events, onExpire]);
 
-  const visible = events.filter((e) => Date.now() - e.createdAt < BLAST_HISTORY_MS);
+  const visible = events.filter((e) => now - e.createdAt < BLAST_HISTORY_MS);
   if (!visible.length) return null;
 
   return (

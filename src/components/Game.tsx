@@ -201,8 +201,9 @@ export default function Game({
   useEffect(() => {
     if (!players || finished || busy) return;
     if (!players[current] || players[current].rank != null) {
-      setCurrent((c) => nextActiveIndex(players, c));
-      return;
+      // skip a player who has already finished; deferred so it isn't a state update inside the effect
+      const t = setTimeout(() => setCurrent((c) => nextActiveIndex(players, c)), 0);
+      return () => clearTimeout(t);
     }
     if (!players[current].isComputer) return;
     const t = setTimeout(takeTurn, 700);
