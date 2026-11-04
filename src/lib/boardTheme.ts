@@ -5,31 +5,75 @@ import { useSyncExternalStore } from "react";
 export type BoardTheme = {
   id: string;
   name: string;
-  light: string; // light squares
-  dark: string; // dark squares
+  light: string;
+  dark: string;
   lightText: string;
   darkText: string;
   frame: string;
 };
 
+/** Five bold board palettes. Default: Ivory. */
 export const BOARD_THEMES: BoardTheme[] = [
-  { id: "classic", name: "Classic", light: "#f8f8f6", dark: "#1c1c1c", lightText: "#1c1c1c", darkText: "#f8f8f6", frame: "#111111" },
-  { id: "wood", name: "Wood", light: "#f0d9b5", dark: "#b58863", lightText: "#5c3a1e", darkText: "#fff7e8", frame: "#5c3a1e" },
-  { id: "jungle", name: "Jungle", light: "#ecfccb", dark: "#4d7c0f", lightText: "#365314", darkText: "#f7fee7", frame: "#365314" },
-  { id: "ocean", name: "Ocean", light: "#e0f2fe", dark: "#0369a1", lightText: "#0c4a6e", darkText: "#f0f9ff", frame: "#0c4a6e" },
-  { id: "candy", name: "Candy", light: "#fdf2f8", dark: "#c084fc", lightText: "#831843", darkText: "#ffffff", frame: "#86198f" },
-  { id: "midnight", name: "Midnight", light: "#475569", dark: "#0f172a", lightText: "#f1f5f9", darkText: "#cbd5e1", frame: "#020617" },
+  {
+    id: "ivory",
+    name: "Ivory",
+    light: "#fafaf9",
+    dark: "#18181b",
+    lightText: "#18181b",
+    darkText: "#fafaf9",
+    frame: "#0a0a0a",
+  },
+  {
+    id: "space",
+    name: "Cosmic",
+    light: "#1e3a5f",
+    dark: "#0a1628",
+    lightText: "#e0f2fe",
+    darkText: "#22d3ee",
+    frame: "#0a0a0a",
+  },
+  {
+    id: "ember",
+    name: "Ember",
+    light: "#ffedd5",
+    dark: "#ea580c",
+    lightText: "#7c2d12",
+    darkText: "#fff7ed",
+    frame: "#9a3412",
+  },
+  {
+    id: "neon",
+    name: "Neon",
+    light: "#fce7f3",
+    dark: "#db2777",
+    lightText: "#831843",
+    darkText: "#fdf2f8",
+    frame: "#9d174d",
+  },
+  {
+    id: "jade",
+    name: "Jade",
+    light: "#d1fae5",
+    dark: "#059669",
+    lightText: "#064e3b",
+    darkText: "#ecfdf5",
+    frame: "#047857",
+  },
 ];
 
-// The chosen theme is a per-browser preference, kept in localStorage and shared by every board on the page.
 const KEY = "snl.boardTheme";
+const DEFAULT_ID = "ivory";
 const listeners = new Set<() => void>();
 
 function read(): string {
   try {
-    return localStorage.getItem(KEY) ?? "classic";
+    const stored = localStorage.getItem(KEY);
+    // Migrate old ids (classic → ivory)
+    if (stored === "classic") return "ivory";
+    if (stored && BOARD_THEMES.some((t) => t.id === stored)) return stored;
+    return DEFAULT_ID;
   } catch {
-    return "classic";
+    return DEFAULT_ID;
   }
 }
 
@@ -37,7 +81,7 @@ export function setBoardTheme(id: string) {
   try {
     localStorage.setItem(KEY, id);
   } catch {
-    // storage unavailable — the choice just won't survive a reload
+    // storage unavailable
   }
   current = id;
   listeners.forEach((l) => l());
@@ -52,7 +96,7 @@ export function useBoardTheme(): BoardTheme {
       return () => listeners.delete(cb);
     },
     () => (current ??= read()),
-    () => "classic",
+    () => DEFAULT_ID,
   );
   return BOARD_THEMES.find((t) => t.id === id) ?? BOARD_THEMES[0];
 }

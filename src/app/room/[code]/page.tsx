@@ -1,14 +1,13 @@
 import { Suspense } from "react";
+import BrandLogo from "@/components/BrandLogo";
 import Room from "./Room";
 
 export default function RoomPage() {
   return (
-    <main className="flex min-h-screen flex-col items-center gap-6 px-4 py-8">
-      <h1 className="text-center text-3xl font-extrabold tracking-tight text-white drop-shadow sm:text-4xl">
-        🐍 Snakes &amp; Ladders 🪜
-      </h1>
-      <div className="w-full max-w-6xl">
-        <Suspense fallback={<p className="text-center text-lg text-white">Loading…</p>}>
+    <main className="relative min-h-[100dvh] w-full px-3 py-3 sm:px-4 sm:py-4">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2">
+        <BrandLogo compact className="justify-center sm:justify-start" />
+        <Suspense fallback={<p className="text-center text-lg text-cyan-200/80">Loading…</p>}>
           <Room />
         </Suspense>
       </div>

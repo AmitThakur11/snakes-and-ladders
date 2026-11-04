@@ -1,5 +1,15 @@
 import type { Server, Socket } from "socket.io";
-import { BOARD_SIZE, LADDERS, SNAKES, rollDie } from "../lib/game";
+import {
+  BOARD_SIZE,
+  SNAKES,
+  LADDERS,
+  generateMines,
+  matchShouldEnd,
+  nextFinishRank,
+  rankLabel,
+  resolveLanding,
+  rollDie,
+} from "../lib/game";
 import { cleanAvatar } from "../lib/avatar";
 import { Ack, MAX_PLAYERS, OnlinePlayer, RoomState, ServerInfo, moveDuration } from "../lib/online";
 
@@ -7,6 +17,8 @@ type ServerPlayer = OnlinePlayer & { socketId: string | null };
 
 type Room = Omit<RoomState, "players"> & {
   players: ServerPlayer[];
+  /** Active hidden mines — never sent to clients until one detonates via lastMove. */
+  mines: number[];
   busyUntil: number;
   seq: number;
   cleanupTimer: NodeJS.Timeout | null;
@@ -45,6 +57,7 @@ function toState(room: Room): RoomState {
       colorIndex: p.colorIndex,
       position: p.position,
       connected: p.connected,
+      rank: p.rank,
     })),
     currentIndex: room.currentIndex,
     winnerId: room.winnerId,
@@ -57,12 +70,13 @@ function addLog(room: Room, msg: string) {
   room.log = [msg, ...room.log].slice(0, 30);
 }
 
-/** Move the turn to the next connected player (or stay put if nobody else is connected). */
+/** Move the turn to the next connected player who has not finished yet. */
 function advanceTurn(room: Room) {
   const n = room.players.length;
   for (let i = 1; i <= n; i++) {
     const idx = (room.currentIndex + i) % n;
-    if (room.players[idx].connected) {
+    const p = room.players[idx];
+    if (p.connected && p.rank == null) {
       room.currentIndex = idx;
       return;
     }
@@ -70,14 +84,20 @@ function advanceTurn(room: Room) {
 }
 
 function resetGame(room: Room) {
-  room.players.forEach((p) => (p.position = 0));
+  room.players.forEach((p) => {
+    p.position = 0;
+    p.rank = null;
+  });
   room.status = "playing";
   room.currentIndex = 0;
   room.winnerId = null;
   room.lastMove = null;
   room.busyUntil = 0;
-  if (!room.players[0].connected) advanceTurn(room);
-  room.log = [`Game started! ${room.players[room.currentIndex].name} goes first.`];
+  room.mines = generateMines();
+  if (!room.players[0].connected || room.players[0].rank != null) advanceTurn(room);
+  room.log = [
+    `Game started! ${room.players[room.currentIndex].name} goes first. ${room.mines.length} hidden volcanoes are buried on the board.`,
+  ];
 }
 
 function scheduleCleanup(room: Room) {
@@ -147,6 +167,7 @@ export function registerRoomHandlers(io: Server, info: ServerInfo) {
         winnerId: null,
         lastMove: null,
         log: [],
+        mines: [],
         busyUntil: 0,
         seq: 0,
         cleanupTimer: null,
@@ -175,9 +196,9 @@ export function registerRoomHandlers(io: Server, info: ServerInfo) {
         }
       } else {
         if (room.status !== "lobby") return ack({ ok: false, error: "That game has already started." });
-        if (room.players.length >= MAX_PLAYERS) return ack({ ok: false, error: "Room is full (4 players max)." });
+        if (room.players.length >= MAX_PLAYERS) return ack({ ok: false, error: `Room is full (${MAX_PLAYERS} players max).` });
         const used = new Set(room.players.map((p) => p.colorIndex));
-        const colorIndex = [0, 1, 2, 3].find((c) => !used.has(c))!;
+        const colorIndex = Array.from({ length: MAX_PLAYERS }, (_, c) => c).find((c) => !used.has(c)) ?? 0;
         player = {
           id: playerId,
           name: cleanName(payload?.name),
@@ -185,6 +206,7 @@ export function registerRoomHandlers(io: Server, info: ServerInfo) {
           colorIndex,
           position: 0,
           connected: true,
+          rank: null,
           socketId: socket.id,
         };
         room.players.push(player);
@@ -227,25 +249,56 @@ export function registerRoomHandlers(io: Server, info: ServerInfo) {
         if (room.status !== "playing") return ack({ ok: false, error: "Game is not running." });
         const player = room.players[room.currentIndex];
         if (player.id !== playerId) return ack({ ok: false, error: "It's not your turn." });
+        if (player.rank != null) return ack({ ok: false, error: "You already finished." });
         if (Date.now() < room.busyUntil) return ack({ ok: false, error: "Wait for the move to finish." });
 
         const roll = rollDie();
         const from = player.position;
         const landed = from + roll <= BOARD_SIZE ? from + roll : from;
-        const final = SNAKES[landed] ?? LADDERS[landed] ?? landed;
+        let mineAt: number | null = null;
+        let mineTo: number | null = null;
+        let final = landed;
+        if (landed !== from) {
+          const resolved = resolveLanding(landed, room.mines);
+          room.mines = resolved.mines;
+          mineAt = resolved.mineAt;
+          mineTo = resolved.mineTo;
+          final = resolved.final;
+        }
         player.position = final;
-        room.lastMove = { seq: ++room.seq, playerId, roll, from, landed, final };
-        room.busyUntil = Date.now() + moveDuration(from, landed, final) + 100;
+        room.lastMove = { seq: ++room.seq, playerId, roll, from, landed, mineAt, mineTo, final };
+        room.busyUntil = Date.now() + moveDuration(from, landed, final, mineTo) + 100;
 
-        if (landed === from) addLog(room, `${player.name} rolled ${roll} — needs exactly ${BOARD_SIZE - from} to win.`);
-        else if (SNAKES[landed]) addLog(room, `🐍 ${player.name} rolled ${roll} and slid down from ${landed} to ${final}.`);
-        else if (LADDERS[landed]) addLog(room, `🪜 ${player.name} rolled ${roll} and climbed from ${landed} to ${final}!`);
-        else addLog(room, `${player.name} rolled ${roll} and moved to ${final}.`);
+        if (landed === from) {
+          addLog(room, `${player.name} rolled ${roll} — needs exactly ${BOARD_SIZE - from} to finish.`);
+        } else {
+          if (mineAt != null && mineTo != null) {
+            addLog(room, `🌋 ${player.name} hit a volcano on ${mineAt} — blasted to ${mineTo}!`);
+          }
+          const afterMine = mineTo ?? landed;
+          if (SNAKES[afterMine]) addLog(room, `🐍 ${player.name} slid from ${afterMine} to ${final}.`);
+          else if (LADDERS[afterMine]) addLog(room, `🪜 ${player.name} climbed from ${afterMine} to ${final}!`);
+          else if (mineAt == null) addLog(room, `${player.name} rolled ${roll} and moved to ${final}.`);
+        }
 
         if (final === BOARD_SIZE) {
-          room.status = "finished";
-          room.winnerId = player.id;
-          addLog(room, `🏆 ${player.name} wins!`);
+          const rank = nextFinishRank(room.players);
+          player.rank = rank;
+          if (rank === 1) room.winnerId = player.id;
+          addLog(room, `🏆 ${player.name} finishes in ${rankLabel(rank)} place!`);
+
+          if (matchShouldEnd(room.players)) {
+            const last = room.players.find((p) => p.rank == null);
+            if (last) {
+              last.rank = room.players.length;
+              addLog(room, `${last.name} takes ${rankLabel(room.players.length)} place.`);
+            }
+            room.status = "finished";
+            addLog(room, "Final podium is set!");
+          } else {
+            // Finishers never keep a bonus turn — hand off to the next racer.
+            advanceTurn(room);
+          }
         } else if (roll === 6) {
           addLog(room, `🎲 ${player.name} rolled a 6 — extra turn!`);
         } else {

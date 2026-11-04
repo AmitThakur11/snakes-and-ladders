@@ -1,16 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Board, { Token } from "./Board";
+import Board, { ThemePicker, Token } from "./Board";
 import Avatar from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
 import Dice from "./Dice";
-import { PLAYER_COLORS } from "@/lib/game";
-import { DICE_ROLL_MS, LastMove, RoomState, ServerInfo, SLIDE_MS, SLIDE_PAUSE_MS, STEP_MS } from "@/lib/online";
+import BlastHistory, { type BlastEvent } from "./VolcanoBurst";
+import JumpToDice, { DICE_SECTION_ID } from "./JumpToDice";
+import { PLAYER_COLORS, rankLabel } from "@/lib/game";
+import {
+  DICE_ROLL_MS,
+  LastMove,
+  MAX_PLAYERS,
+  MINE_BLAST_MS,
+  MINE_PAUSE_MS,
+  RoomState,
+  ServerInfo,
+  SLIDE_MS,
+  SLIDE_PAUSE_MS,
+  STEP_MS,
+} from "@/lib/online";
 import { avatarSeed, randomSalt } from "@/lib/avatar";
 import { getPlayerId, getSavedName, getSavedSalt, getSocket, saveName, saveSalt } from "@/lib/socket";
+import { playDiceRoll, playMoveStep, playVolcanoBurst, prefetchSfx } from "@/lib/sfx";
 
 // Hidden tabs throttle timers, which would make moves pile up; skip the animation there instead.
 const sleep = (ms: number) =>
@@ -33,28 +47,66 @@ export default function OnlineGame({ code }: { code: string }) {
   const [animating, setAnimating] = useState(false);
   const [rollPending, setRollPending] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [mineBurst, setMineBurst] = useState<{ id: number; at: number; to: number } | null>(null);
+  const [blastHistory, setBlastHistory] = useState<BlastEvent[]>([]);
   const [myId] = useState(getPlayerId);
 
   const roomRef = useRef<RoomState | null>(null);
   const lastSeq = useRef<number | null>(null);
   const queue = useRef<Promise<void>>(Promise.resolve());
   const pendingMoves = useRef(0);
+  const blastIdRef = useRef(0);
+  const prevStatus = useRef<RoomState["status"] | null>(null);
+
+  useEffect(() => {
+    prefetchSfx();
+  }, []);
+
+  // New match → clear local blast log (client-only history).
+  useEffect(() => {
+    const status = room?.status ?? null;
+    if (status === "playing" && prevStatus.current && prevStatus.current !== "playing") {
+      setBlastHistory([]);
+      blastIdRef.current = 0;
+      setMineBurst(null);
+    }
+    prevStatus.current = status;
+  }, [room?.status]);
 
   const syncDisplay = (r: RoomState) =>
     setDisplay(Object.fromEntries(r.players.map((p) => [p.id, p.position])));
 
   const animate = useCallback(async (mv: LastMove) => {
     setAnimating(true);
+    setMineBurst(null);
     setDice(mv.roll);
     setRollId((n) => n + 1);
+    playDiceRoll();
     await sleep(DICE_ROLL_MS);
     for (let pos = mv.from + 1; pos <= mv.landed && mv.landed !== mv.from; pos++) {
       setDisplay((d) => ({ ...d, [mv.playerId]: pos }));
+      playMoveStep();
       await sleep(STEP_MS);
     }
-    if (mv.final !== mv.landed) {
+    let slideFrom = mv.landed;
+    if (mv.mineAt != null && mv.mineTo != null) {
+      const id = ++blastIdRef.current;
+      const who = roomRef.current?.players.find((p) => p.id === mv.playerId)?.name ?? "Player";
+      const event: BlastEvent = { id, at: mv.mineAt, to: mv.mineTo, name: who, createdAt: Date.now() };
+      setBlastHistory((prev) => [...prev, event]);
+      setMineBurst({ id, at: mv.mineAt, to: mv.mineTo });
+      playVolcanoBurst();
+      await sleep(MINE_PAUSE_MS);
+      setDisplay((d) => ({ ...d, [mv.playerId]: mv.mineTo! }));
+      playMoveStep();
+      await sleep(MINE_BLAST_MS);
+      setMineBurst(null);
+      slideFrom = mv.mineTo;
+    }
+    if (mv.final !== slideFrom) {
       await sleep(SLIDE_PAUSE_MS);
       setDisplay((d) => ({ ...d, [mv.playerId]: mv.final }));
+      playMoveStep();
       await sleep(SLIDE_MS);
     }
     pendingMoves.current--;
@@ -116,6 +168,19 @@ export default function OnlineGame({ code }: { code: string }) {
   const current = room?.players[room.currentIndex];
   const isHost = room?.hostId === myId;
   const myTurn = room?.status === "playing" && current?.id === myId && !animating && !rollPending;
+
+  // Stable token list — Board memo skips when only unrelated room fields change.
+  const tokens: Token[] = useMemo(() => {
+    if (!room) return [];
+    return room.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      color: PLAYER_COLORS[p.colorIndex % PLAYER_COLORS.length],
+      avatar: p.avatar,
+      position: display[p.id] ?? p.position,
+      rank: p.rank,
+    }));
+  }, [room, display]);
 
   const roll = useCallback(() => {
     if (!myTurn) return;
@@ -180,10 +245,10 @@ export default function OnlineGame({ code }: { code: string }) {
           saveName(nameDraft.trim());
           setName(nameDraft.trim());
         }}
-        className="mx-auto w-full max-w-md rounded-2xl bg-white/90 p-6 shadow-xl"
+        className="mx-auto w-full max-w-md ui-panel p-6"
       >
-        <h2 className="mb-1 text-xl font-bold text-slate-800">Join room {code}</h2>
-        <p className="mb-4 text-sm text-slate-500">Pick a name the other players will see.</p>
+        <h2 className="mb-1 font-display text-xl font-bold tracking-wide text-white">Join room {code}</h2>
+        <p className="mb-4 text-sm text-slate-400">Pick a name the other players will see.</p>
         <div className="mb-4 flex items-center gap-3">
           <AvatarPicker
             name={nameDraft}
@@ -200,10 +265,10 @@ export default function OnlineGame({ code }: { code: string }) {
             onChange={(e) => setNameDraft(e.target.value)}
             maxLength={16}
             placeholder="Your name"
-            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 outline-none focus:border-emerald-500"
+            className="min-w-0 flex-1 ui-input"
           />
         </div>
-        <button className="w-full rounded-xl bg-emerald-600 py-3 font-bold text-white hover:bg-emerald-700">
+        <button className="ui-btn ui-btn-primary w-full py-3">
           Join
         </button>
       </form>
@@ -212,9 +277,9 @@ export default function OnlineGame({ code }: { code: string }) {
 
   if (error && !room) {
     return (
-      <div className="mx-auto w-full max-w-md rounded-2xl bg-white/90 p-6 text-center shadow-xl">
-        <p className="mb-4 font-semibold text-red-600">{error}</p>
-        <Link href="/" className="font-semibold text-emerald-700 underline">
+      <div className="mx-auto w-full max-w-md ui-panel p-6 text-center">
+        <p className="mb-4 font-semibold text-rose-400">{error}</p>
+        <Link href="/" className="font-semibold text-cyan-300 underline">
           Back to home
         </Link>
       </div>
@@ -231,20 +296,30 @@ export default function OnlineGame({ code }: { code: string }) {
         <li
           key={p.id}
           className={`flex items-center justify-between rounded-lg px-2 py-1 ${
-            room.status === "playing" && p.id === current?.id ? "bg-emerald-50" : ""
+            room.status === "playing" && p.id === current?.id ? "bg-cyan-500/10 ring-1 ring-cyan-400/25" : ""
           } ${p.connected ? "" : "opacity-40"}`}
         >
-          <span className="flex items-center gap-2 text-slate-700">
-            <span className="rounded-full border-2" style={{ borderColor: PLAYER_COLORS[p.colorIndex].fill }}>
+          <span className="flex items-center gap-2 text-slate-200">
+            <span
+              className="rounded-full border-2"
+              style={{ borderColor: PLAYER_COLORS[p.colorIndex % PLAYER_COLORS.length].fill }}
+            >
               <Avatar seed={p.avatar} className="h-7 w-7" />
             </span>
             {p.name}
-            {p.id === myId && <span className="text-xs text-emerald-600">(you)</span>}
+            {p.id === myId && <span className="text-xs text-cyan-300">(you)</span>}
             {p.id === room.hostId && <span className="text-xs text-amber-600">★ host</span>}
             {!p.connected && <span className="text-xs text-slate-400">offline</span>}
           </span>
           {room.status !== "lobby" && (
-            <span className="font-mono text-sm text-slate-500">{display[p.id] || "start"}</span>
+            <span className="flex items-center gap-1.5 font-mono text-sm text-slate-400">
+              {p.rank != null && (
+                <span className="rounded bg-amber-400/15 px-1.5 text-xs font-bold text-amber-300">
+                  {rankLabel(p.rank)}
+                </span>
+              )}
+              {p.rank != null ? "done" : display[p.id] || "start"}
+            </span>
           )}
         </li>
       ))}
@@ -252,7 +327,7 @@ export default function OnlineGame({ code }: { code: string }) {
   );
 
   const banner = !connected && (
-    <p className="mb-4 rounded-lg bg-amber-100 px-3 py-2 text-center text-sm font-medium text-amber-800">
+    <p className="mb-4 rounded-lg bg-amber-400/15 px-3 py-2 text-center text-sm font-medium text-amber-200 ring-1 ring-amber-400/25">
       Connection lost — reconnecting…
     </p>
   );
@@ -260,25 +335,27 @@ export default function OnlineGame({ code }: { code: string }) {
   // --- Lobby ---
   if (room.status === "lobby") {
     return (
-      <div className="mx-auto w-full max-w-md rounded-2xl bg-white/90 p-6 shadow-xl">
+      <div className="mx-auto w-full max-w-md ui-panel p-6">
         {banner}
         <p className="text-center text-sm font-medium uppercase tracking-wide text-slate-500">Room code</p>
-        <p className="mb-3 text-center font-mono text-5xl font-extrabold tracking-[0.3em] text-slate-800">{code}</p>
-        <div className="mb-5 flex items-center gap-2 rounded-lg bg-slate-100 p-2">
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-600">{shareUrl}</span>
-          <button onClick={copyLink} className="shrink-0 rounded-md bg-white px-3 py-1 text-sm font-semibold text-slate-700 shadow">
+        <p className="mb-3 text-center font-mono text-5xl font-extrabold tracking-[0.3em] text-cyan-200">{code}</p>
+        <div className="mb-5 flex items-center gap-2 rounded-lg bg-slate-950/60 p-2 ring-1 ring-cyan-400/15">
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-400">{shareUrl}</span>
+          <button onClick={copyLink} className="shrink-0 rounded-md bg-white px-3 py-1 text-sm font-semibold text-slate-200 shadow">
             {copied ? "Copied!" : "Copy link"}
           </button>
         </div>
 
-        <h3 className="mb-2 font-bold text-slate-800">Players ({room.players.length}/4)</h3>
+        <h3 className="mb-2 font-display font-bold tracking-wide text-white">
+          Players ({room.players.length}/{MAX_PLAYERS})
+        </h3>
         {playerList}
 
         {isHost ? (
           <button
             onClick={startGame}
             disabled={room.players.length < 2}
-            className="mt-6 w-full rounded-xl bg-emerald-600 py-3 text-lg font-bold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="ui-btn ui-btn-primary mt-6 w-full py-3 text-lg"
           >
             {room.players.length < 2 ? "Waiting for players…" : "Start game"}
           </button>
@@ -286,7 +363,7 @@ export default function OnlineGame({ code }: { code: string }) {
           <p className="mt-6 text-center text-slate-500">Waiting for the host to start…</p>
         )}
         {error && <p className="mt-3 text-center text-sm text-red-600">{error}</p>}
-        <button onClick={leave} className="mt-4 w-full text-sm text-slate-400 hover:text-slate-600">
+        <button onClick={leave} className="mt-4 w-full text-sm text-slate-400 hover:text-slate-400">
           Leave room
         </button>
       </div>
@@ -294,47 +371,68 @@ export default function OnlineGame({ code }: { code: string }) {
   }
 
   // --- Playing / finished ---
-  const tokens: Token[] = room.players.map((p) => ({
-    id: p.id,
-    name: p.name,
-    color: PLAYER_COLORS[p.colorIndex],
-    avatar: p.avatar,
-    position: display[p.id] ?? p.position,
-  }));
-  const winner = room.status === "finished" && !animating ? room.players.find((p) => p.id === room.winnerId) : null;
+  const showPodium = room.status === "finished" && !animating;
+  const podium = [...room.players].filter((p) => p.rank != null).sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
   const mover = animating ? room.players.find((p) => p.id === room.lastMove?.playerId) : null;
+  const myFinished = me?.rank != null;
 
   return (
-    <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-start">
-      <div className="mx-auto w-full max-w-[min(90vh,640px)] flex-1">
-        <Board players={tokens} currentId={winner ? null : (mover?.id ?? current?.id ?? null)} />
+    <div className="flex h-[calc(100dvh-4.5rem)] w-full min-h-[420px] flex-col gap-4 lg:flex-row lg:items-stretch">
+      <div className="relative min-h-[320px] min-w-0 flex-1 lg:min-h-0">
+        <Board
+          players={tokens}
+          currentId={showPodium ? null : (mover?.id ?? current?.id ?? null)}
+          burstSquare={mineBurst?.at ?? null}
+        />
+        <JumpToDice />
       </div>
 
-      <aside className="flex w-full flex-col gap-4 lg:w-80">
-        <div className="rounded-2xl bg-white/90 p-5 shadow-xl">
+      <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto lg:w-80 lg:max-h-full">
+        <ThemePicker />
+
+        <div id={DICE_SECTION_ID} className="ui-panel p-5">
           {banner}
-          {winner ? (
+          {showPodium ? (
             <div className="text-center">
-              <div className="relative mx-auto w-fit">
-                <Avatar seed={winner.avatar} className="h-20 w-20" />
-                <span className="absolute -right-3 -top-3 text-3xl">🏆</span>
-              </div>
-              <p className="mt-2 text-2xl font-bold" style={{ color: PLAYER_COLORS[winner.colorIndex].ring }}>
-                {winner.id === myId ? "You win!" : `${winner.name} wins!`}
-              </p>
+              <p className="font-display text-2xl font-bold text-white">Final podium</p>
+              <ol className="mt-3 space-y-2 text-left">
+                {podium.map((p) => (
+                  <li key={p.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5">
+                    <span className="w-10 text-sm font-bold text-amber-600">{rankLabel(p.rank!)}</span>
+                    <span
+                      className="rounded-full border-2"
+                      style={{ borderColor: PLAYER_COLORS[p.colorIndex % PLAYER_COLORS.length].fill }}
+                    >
+                      <Avatar seed={p.avatar} className="h-8 w-8" />
+                    </span>
+                    <span className="font-semibold text-slate-200">
+                      {p.name}
+                      {p.id === myId ? " (you)" : ""}
+                    </span>
+                  </li>
+                ))}
+              </ol>
             </div>
           ) : (
-            <p className="flex items-center justify-center gap-2 text-lg font-semibold text-slate-700">
+            <p className="flex items-center justify-center gap-2 text-lg font-semibold text-slate-200">
               {mover ? (
                 <>
-                  <span className="rounded-full border-2" style={{ borderColor: PLAYER_COLORS[mover.colorIndex].fill }}>
+                  <span
+                    className="rounded-full border-2"
+                    style={{ borderColor: PLAYER_COLORS[mover.colorIndex % PLAYER_COLORS.length].fill }}
+                  >
                     <Avatar seed={mover.avatar} className="h-8 w-8" />
                   </span>
                   {mover.name} is moving…
                 </>
+              ) : myFinished ? (
+                <>You finished {me?.rank != null ? rankLabel(me.rank) : ""} — watching the race…</>
               ) : current ? (
                 <>
-                  <span className="rounded-full border-2" style={{ borderColor: PLAYER_COLORS[current.colorIndex].fill }}>
+                  <span
+                    className="rounded-full border-2"
+                    style={{ borderColor: PLAYER_COLORS[current.colorIndex % PLAYER_COLORS.length].fill }}
+                  >
                     <Avatar seed={current.avatar} className="h-8 w-8" />
                   </span>
                   {current.id === myId ? "Your turn!" : `${current.name}'s turn`}
@@ -343,55 +441,63 @@ export default function OnlineGame({ code }: { code: string }) {
             </p>
           )}
 
-          <div className="my-4 flex justify-center">
+          <div className="my-4 flex justify-center overflow-visible py-6">
             <Dice value={dice} rollId={rollId} />
           </div>
 
-          {winner ? (
+          <BlastHistory
+            events={blastHistory}
+            liveId={mineBurst?.id ?? null}
+            onExpire={setBlastHistory}
+          />
+
+          {showPodium ? (
             isHost ? (
               <button
                 onClick={startGame}
-                className="w-full rounded-xl bg-emerald-600 py-3 font-bold text-white hover:bg-emerald-700"
+                className="ui-btn ui-btn-primary w-full py-3"
               >
                 Play again
               </button>
             ) : (
-              <p className="text-center text-sm text-slate-500">Waiting for the host to start a new game…</p>
+              <p className="text-center text-sm text-slate-400">Waiting for the host to start a new game…</p>
             )
           ) : me ? (
             <button
               onClick={roll}
-              disabled={!myTurn}
-              className="w-full rounded-xl bg-emerald-600 py-3 text-lg font-bold text-white shadow transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!myTurn || myFinished}
+              className="ui-btn ui-btn-primary w-full py-3 text-lg"
             >
-              {myTurn ? "Roll dice" : animating ? "Moving…" : "Waiting…"}
+              {myFinished
+                ? "Finished — watching…"
+                : myTurn
+                  ? "Roll dice"
+                  : mineBurst
+                    ? "Volcano blast…"
+                    : (animating || rollPending) && current?.id === myId
+                      ? "Moving…"
+                      : animating
+                        ? `${current?.name ?? "Player"} is moving…`
+                        : current
+                          ? `Waiting for ${current.name}…`
+                          : "Waiting for next turn…"}
             </button>
           ) : (
-            <p className="text-center text-sm text-slate-500">You&apos;re watching this game.</p>
+            <p className="text-center text-sm text-slate-400">You&apos;re watching this game.</p>
           )}
           {error && <p className="mt-3 text-center text-sm text-red-600">{error}</p>}
         </div>
 
-        <div className="rounded-2xl bg-white/90 p-5 shadow-xl">
+        <div className="ui-panel p-5">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="font-bold text-slate-800">Room {code}</h3>
-            <button onClick={leave} className="text-xs text-slate-400 hover:text-slate-600">
+            <h3 className="font-display font-bold tracking-wide text-white">Room {code}</h3>
+            <button onClick={leave} className="text-xs text-slate-400 hover:text-slate-400">
               Leave
             </button>
           </div>
           {playerList}
         </div>
 
-        <div className="rounded-2xl bg-white/90 p-5 shadow-xl">
-          <h3 className="mb-2 font-bold text-slate-800">Game log</h3>
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-slate-600">
-            {room.log.map((l, i) => (
-              <li key={`${room.log.length - i}`} className={i === 0 ? "font-medium text-slate-800" : ""}>
-                {l}
-              </li>
-            ))}
-          </ul>
-        </div>
       </aside>
     </div>
   );

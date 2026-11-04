@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { avatarParts } from "@/lib/avatar";
 
 /** A round cartoon face drawn from `seed` (see lib/avatar). Scales to whatever box it's given. */
-export default function Avatar({ seed, className = "h-8 w-8" }: { seed: string; className?: string }) {
+function Avatar({ seed, className = "h-8 w-8" }: { seed: string; className?: string }) {
   const p = avatarParts(seed);
   const ink = "#1f2937";
 
@@ -106,3 +107,5 @@ export default function Avatar({ seed, className = "h-8 w-8" }: { seed: string; 
     </svg>
   );
 }
+
+export default memo(Avatar);

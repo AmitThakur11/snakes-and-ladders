@@ -1,0 +1,4 @@
+Dice roll samples (dice-roll.wav, dice-roll-b.wav)
+Source: SFXMint — https://sfxmint.com/sounds/impact-dice-roll
+License: CC0 1.0 (public domain) — no attribution required
+Files derived from “Single Die” / “Two Dice” table rolls, trimmed & normalized for in-game use.
