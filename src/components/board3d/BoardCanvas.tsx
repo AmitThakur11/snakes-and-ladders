@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Suspense, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
+import { STEP_MS } from "@/lib/online";
 import {
   BOARD_SIZE,
   GRID,
@@ -339,8 +340,14 @@ const Token3D = memo(function Token3D({
   const baseY = 0.42;
   const target = useRef(new THREE.Vector3(bx + ox, baseY, bz + oz));
   const from = useRef(new THREE.Vector3(bx + ox, baseY, bz + oz));
-  /** 0 = idle lerp; 0..1 = lofted blast/teleport arc. */
-  const arc = useRef(0);
+  // Where the token first appears. Passing the live square as the position prop would make
+  // React snap the token to each new square before the animation below gets to move it.
+  const [initialPos] = useState<[number, number, number]>(() => [bx + ox, baseY, bz + oz]);
+  /** Progress of the current move, 0..1 (1 = resting on the target). */
+  const progress = useRef(1);
+  /** Length of the current move in seconds, and how high it hops. */
+  const moveSecs = useRef(STEP_MS / 1000);
+  const hopHeight = useRef(0);
 
   useLayoutEffect(() => {
     if (!ref.current) {
@@ -349,12 +356,17 @@ const Token3D = memo(function Token3D({
       return;
     }
     const next = new THREE.Vector3(bx + ox, baseY, bz + oz);
-    const dist = next.distanceTo(target.current);
     from.current.copy(ref.current.position);
     from.current.y = baseY;
+    const dist = from.current.distanceTo(next);
     target.current.copy(next);
-    // Big jumps (mine blast / snake-ladder) fly in an arc so the position change reads clearly.
-    arc.current = dist > 1.15 ? 0.001 : 0;
+    if (dist < 1e-4) return;
+    // One square: a quick hop that fills the gap between steps. Bigger moves (snakes, ladders,
+    // blasts) fly in a higher, slower arc so the jump reads clearly.
+    const big = dist > 1.6; // the step off the start pad (~1.35) is still a normal hop
+    moveSecs.current = big ? THREE.MathUtils.clamp(0.45 + dist * 0.06, 0.55, 0.95) : (STEP_MS / 1000) * 0.95;
+    hopHeight.current = big ? Math.min(1.6, dist * 0.3 + 0.5) : dist < 0.5 ? 0.06 : 0.22;
+    progress.current = 0;
     invalidate();
   }, [bx, bz, ox, oz, invalidate]);
 
@@ -362,35 +374,34 @@ const Token3D = memo(function Token3D({
     if (!ref.current) return;
     const p = ref.current.position;
     const t = target.current;
-    if (arc.current > 0 && arc.current < 1) {
-      arc.current = Math.min(1, arc.current + dt * 1.35);
-      const u = arc.current;
-      p.x = THREE.MathUtils.lerp(from.current.x, t.x, u);
-      p.z = THREE.MathUtils.lerp(from.current.z, t.z, u);
-      p.y = baseY + Math.sin(u * Math.PI) * Math.min(2.4, from.current.distanceTo(t) * 0.45 + 0.8);
-      ref.current.rotation.y += dt * 8;
+    if (progress.current < 1) {
+      // eased glide with a hop: slow start and landing, highest in the middle
+      progress.current = Math.min(1, progress.current + Math.min(dt, 0.05) / moveSecs.current);
+      const u = progress.current;
+      const e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+      p.x = THREE.MathUtils.lerp(from.current.x, t.x, e);
+      p.z = THREE.MathUtils.lerp(from.current.z, t.z, e);
+      p.y = baseY + Math.sin(u * Math.PI) * hopHeight.current;
+      if (hopHeight.current > 0.5) ref.current.rotation.y += dt * 6;
       state.invalidate();
-      if (arc.current >= 1) arc.current = 0;
       return;
     }
-    const k = Math.min(1, dt * 12);
-    p.x = THREE.MathUtils.lerp(p.x, t.x, k);
-    p.z = THREE.MathUtils.lerp(p.z, t.z, k);
-    const moving = (t.x - p.x) ** 2 + (t.z - p.z) ** 2 > 1e-6;
+    p.x = t.x;
+    p.z = t.z;
     if (active) {
       p.y = baseY + 0.1 + Math.sin(performance.now() * 0.006) * 0.08;
       ref.current.rotation.y += dt * 1.4;
       state.invalidate();
     } else {
       p.y = THREE.MathUtils.lerp(p.y, baseY, 0.15);
-      if (moving || Math.abs(p.y - baseY) > 0.002) state.invalidate();
+      if (Math.abs(p.y - baseY) > 0.002) state.invalidate();
     }
   });
 
   const finished = token.rank != null;
 
   return (
-    <group ref={ref} position={[bx + ox, baseY, bz + oz]}>
+    <group ref={ref} position={initialPos}>
       <mesh castShadow position={[0, -0.14, 0]}>
         <cylinderGeometry args={TOKEN_BASE_ARGS} />
         <meshStandardMaterial color={token.color.ring} roughness={0.45} metalness={0.25} />

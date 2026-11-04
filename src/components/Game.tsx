@@ -335,7 +335,17 @@ export default function Game({
           )}
 
           <div className="my-4 flex justify-center overflow-visible py-6">
-            <Dice value={dice} rollId={rollId} />
+            {/* tapping the die rolls it, same as the Roll dice button */}
+            <button
+              type="button"
+              onClick={takeTurn}
+              disabled={finished || busy || active.isComputer || active.rank != null}
+              aria-label="Roll dice"
+              title="Tap to roll"
+              className="rounded-2xl outline-none transition enabled:cursor-pointer enabled:hover:scale-105 enabled:active:scale-95 focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-default"
+            >
+              <Dice value={dice} rollId={rollId} />
+            </button>
           </div>
 
           <BlastHistory
