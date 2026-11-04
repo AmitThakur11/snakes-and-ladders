@@ -1,6 +1,6 @@
 "use client";
 
-import { type RefObject, Suspense, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Suspense, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -12,10 +12,8 @@ import {
   squareToCoords,
   squareToWorld,
 } from "@/lib/game";
-import { BoardTheme, useBoardTheme } from "@/lib/boardTheme";
 import type { Token } from "../Board";
 
-const BOARD_EDGE_ARGS: [number, number, number] = [GRID + 0.65, 0.1, GRID + 0.65];
 const BOARD_PLANE_ARGS: [number, number] = [GRID, GRID];
 const START_PAD_ARGS: [number, number] = [0.48, 28];
 const TOKEN_BASE_ARGS: [number, number, number, number] = [0.26, 0.26, 0.08, 16];
@@ -23,49 +21,98 @@ const TOKEN_BODY_ARGS: [number, number, number, number] = [0.18, 0.2, 4, 12];
 const TOKEN_HEAD_ARGS: [number, number, number] = [0.18, 14, 14];
 const TOKEN_RING_ARGS: [number, number] = [0.38, 24];
 
-/** Colours per snake, keyed by head square. */
-const SNAKE_SKINS: Record<
-  number,
-  { main: string; belly: string; accent: string; eye: string }
-> = {
-  99: { main: "#2f7a28", belly: "#a8d46a", accent: "#1e5a1a", eye: "#f0c419" },
-  92: { main: "#9a3b28", belly: "#e8b089", accent: "#6a2018", eye: "#f0c419" },
-  87: { main: "#2a6f7a", belly: "#9fd0d8", accent: "#164850", eye: "#f0c419" },
-  80: { main: "#6b5230", belly: "#d8c090", accent: "#3f3018", eye: "#f0c419" },
-  37: { main: "#2e7a52", belly: "#b5d89a", accent: "#1a4a32", eye: "#f0c419" },
-  14: { main: "#7a2e48", belly: "#e0a8b8", accent: "#4a1828", eye: "#f0c419" },
-};
+// Wooden tactile board: kraft-card squares, serif numbers, raised dots and peg holes,
+// a polished rosewood frame, flat painted ladders and cut-out snakes.
+const CARD = "#c8a06c";
+const GRID_LINE = "#4a2c17";
+const NUMBER_INK = "#1c140c";
+const ROSEWOOD = "#6b2614";
+const LADDER_PAINT = "#f5a92a";
+const LADDER_EDGE = "#b8700c";
+const SNAKE_PAINTS = ["#e2402a", "#1b1b1b", "#7b2d1a"];
 
-/** Flat black & white (or themed) checkered board texture. */
-function buildBoardTexture(theme: BoardTheme): THREE.CanvasTexture {
-  const size = 1024;
+/** Small deterministic PRNG so the card speckle and dot patterns never change between renders. */
+function seeded(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Kraft-card squares with grid lines, braille-style raised dots, peg holes and serif numbers. */
+function buildBoardTexture(): THREE.CanvasTexture {
+  const size = 2048;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
   const cell = size / GRID;
+  const rand = seeded(7);
+
+  ctx.fillStyle = GRID_LINE;
+  ctx.fillRect(0, 0, size, size);
 
   for (let n = 1; n <= BOARD_SIZE; n++) {
     const { row, col } = squareToCoords(n);
     const x = col * cell;
     const y = (GRID - 1 - row) * cell;
-    const dark = (row + col) % 2 === 1;
-    ctx.fillStyle = dark ? theme.dark : theme.light;
-    ctx.fillRect(x, y, cell + 0.5, cell + 0.5);
+    const inset = cell * 0.025;
+    const w = cell - inset * 2;
 
-    ctx.strokeStyle = "rgba(0,0,0,0.12)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
-
-    ctx.fillStyle = dark ? theme.darkText : theme.lightText;
-    ctx.font = `700 ${Math.floor(cell * 0.26)}px system-ui, sans-serif`;
-    ctx.textBaseline = "top";
-    ctx.fillText(n === BOARD_SIZE ? "★" : String(n), x + cell * 0.08, y + cell * 0.08);
-
-    if (n === BOARD_SIZE) {
-      ctx.fillStyle = "rgba(250, 204, 21, 0.28)";
-      ctx.fillRect(x, y, cell, cell);
+    // card face with a slight per-square shade, then speckle
+    const shade = 0.94 + rand() * 0.1;
+    const base = new THREE.Color(CARD).multiplyScalar(shade);
+    ctx.fillStyle = `#${base.getHexString()}`;
+    ctx.fillRect(x + inset, y + inset, w, w);
+    for (let i = 0; i < 90; i++) {
+      ctx.fillStyle = rand() < 0.5 ? "rgba(255,240,210,0.18)" : "rgba(70,40,15,0.12)";
+      ctx.fillRect(x + inset + rand() * w, y + inset + rand() * w, 2, 2);
     }
+    // embossed edge: light top-left, shadow bottom-right
+    ctx.fillStyle = "rgba(255,245,220,0.22)";
+    ctx.fillRect(x + inset, y + inset, w, cell * 0.018);
+    ctx.fillRect(x + inset, y + inset, cell * 0.018, w);
+    ctx.fillStyle = "rgba(40,20,5,0.25)";
+    ctx.fillRect(x + inset, y + inset + w - cell * 0.02, w, cell * 0.02);
+    ctx.fillRect(x + inset + w - cell * 0.02, y + inset, cell * 0.02, w);
+
+    // braille-style raised dots (2×3 cells, pattern from the square number), top-left
+    const bits = (n * 37 + 11) % 63 || 1;
+    for (let b = 0; b < 6; b++) {
+      if (!((bits >> b) & 1)) continue;
+      const dx = x + cell * (0.16 + (b % 2) * 0.07);
+      const dy = y + cell * (0.14 + Math.floor(b / 2) * 0.07);
+      const r = cell * 0.022;
+      ctx.fillStyle = "rgba(60,35,12,0.35)";
+      ctx.beginPath();
+      ctx.arc(dx + r * 0.35, dy + r * 0.35, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#efe2c4";
+      ctx.beginPath();
+      ctx.arc(dx, dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // two peg holes in the middle of the square
+    for (const hx of [0.42, 0.58]) {
+      ctx.fillStyle = "#1a0f06";
+      ctx.beginPath();
+      ctx.arc(x + cell * hx, y + cell * 0.5, cell * 0.042, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,240,210,0.25)";
+      ctx.beginPath();
+      ctx.arc(x + cell * hx, y + cell * 0.5 + cell * 0.042, cell * 0.042, 0, Math.PI);
+      ctx.fill();
+    }
+
+    // bold serif number, bottom-right
+    ctx.fillStyle = NUMBER_INK;
+    ctx.font = `700 ${Math.floor(cell * 0.25)}px Georgia, "Times New Roman", serif`;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(String(n), x + cell * 0.9, y + cell * 0.9);
   }
 
   const tex = new THREE.CanvasTexture(canvas);
@@ -75,21 +122,44 @@ function buildBoardTexture(theme: BoardTheme): THREE.CanvasTexture {
   return tex;
 }
 
-/** Flat board on the XZ plane — rotate the camera for table or wall view. */
-function BoardSurface({ theme }: { theme: BoardTheme }) {
-  const texture = useMemo(() => buildBoardTexture(theme), [theme]);
+const FRAME_W = 0.26; // rosewood frame width, in squares
+const FRAME_H = 0.14;
+
+/** Card board on the XZ plane inside a raised, glossy rosewood frame. */
+function BoardSurface() {
+  const texture = useMemo(() => buildBoardTexture(), []);
   useEffect(() => () => texture.dispose(), [texture]);
+  const half = GRID / 2;
+  const bars: { pos: [number, number, number]; size: [number, number, number] }[] = [
+    { pos: [0, FRAME_H / 2 - 0.04, -half - FRAME_W / 2], size: [GRID + FRAME_W * 2, FRAME_H, FRAME_W] },
+    { pos: [0, FRAME_H / 2 - 0.04, half + FRAME_W / 2], size: [GRID + FRAME_W * 2, FRAME_H, FRAME_W] },
+    { pos: [-half - FRAME_W / 2, FRAME_H / 2 - 0.04, 0], size: [FRAME_W, FRAME_H, GRID] },
+    { pos: [half + FRAME_W / 2, FRAME_H / 2 - 0.04, 0], size: [FRAME_W, FRAME_H, GRID] },
+  ];
 
   return (
     <group>
-      {/* Black board-side border (not a UI box — just the table edge) */}
-      <mesh position={[0, -0.06, 0]} receiveShadow>
-        <boxGeometry args={BOARD_EDGE_ARGS} />
-        <meshStandardMaterial color="#0a0a0a" roughness={0.55} metalness={0.12} />
+      <mesh position={[0, -0.07, 0]} receiveShadow>
+        <boxGeometry args={[GRID + FRAME_W * 2, 0.1, GRID + FRAME_W * 2]} />
+        <meshStandardMaterial color={ROSEWOOD} roughness={0.5} metalness={0.05} />
       </mesh>
+      {bars.map((b, i) => (
+        <mesh key={i} position={b.pos} castShadow receiveShadow>
+          <boxGeometry args={b.size} />
+          <meshStandardMaterial color={ROSEWOOD} roughness={0.32} metalness={0.08} />
+        </mesh>
+      ))}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]} receiveShadow>
         <planeGeometry args={BOARD_PLANE_ARGS} />
-        <meshBasicMaterial map={texture} />
+        {/* a little self-light keeps the card warm under the scene's cool space lighting */}
+        <meshStandardMaterial
+          map={texture}
+          emissive="#ffffff"
+          emissiveMap={texture}
+          emissiveIntensity={0.32}
+          roughness={0.9}
+          metalness={0}
+        />
       </mesh>
       <mesh position={[-(GRID - 1) / 2 - 1.25, 0.02, (GRID - 1) / 2]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={START_PAD_ARGS} />
@@ -99,95 +169,52 @@ function BoardSurface({ theme }: { theme: BoardTheme }) {
   );
 }
 
-/** Straight wooden ladder — parallel rails, even rungs, pegs (real board-game style). */
+/** Flat painted ladder lying on the board: two rails, evenly spaced rungs, rivets at each joint. */
 function Ladder3D({ from, to }: { from: number; to: number }) {
   const built = useMemo(() => {
     const [ax, , az] = squareToWorld(from);
     const [bx, , bz] = squareToWorld(to);
-    const y = 0.15;
-    const start = new THREE.Vector3(ax, y, az);
-    const end = new THREE.Vector3(bx, y, bz);
+    const start = new THREE.Vector3(ax, 0, az);
+    const end = new THREE.Vector3(bx, 0, bz);
     const len = start.distanceTo(end);
     const forward = end.clone().sub(start).normalize();
     const mid = start.clone().lerp(end, 0.5);
-
-    const side = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
-    if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
-    else side.normalize();
-
-    const railQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), forward);
-    const rungQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), side);
-
-    const halfW = 0.175;
-    const railLen = len + 0.14;
-    const rungCount = Math.max(3, Math.round(len / 0.36));
-    const sideOffset = side.clone().multiplyScalar(halfW);
-
-    const rungs = Array.from({ length: rungCount }, (_, i) => {
-      const t = (i + 1) / (rungCount + 1);
-      const p = start.clone().lerp(end, t);
-      return {
-        pos: [p.x, p.y + 0.012, p.z] as [number, number, number],
-        leftPeg: p.clone().add(sideOffset).toArray() as [number, number, number],
-        rightPeg: p.clone().sub(sideOffset).toArray() as [number, number, number],
-      };
-    });
-
-    return {
-      leftPos: mid.clone().add(sideOffset).toArray() as [number, number, number],
-      rightPos: mid.clone().sub(sideOffset).toArray() as [number, number, number],
-      railQuat,
-      rungQuat,
-      railLen,
-      rungs,
-      halfW,
-      mid: mid.toArray() as [number, number, number],
-      shadowQuat: new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, Math.atan2(forward.x, forward.z))),
-    };
+    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), forward);
+    const railLen = len + 0.3;
+    const rungCount = Math.max(3, Math.round(len / 0.3));
+    const rungZ = Array.from({ length: rungCount }, (_, i) => -len / 2 + ((i + 0.5) / rungCount) * len);
+    return { mid: [mid.x, 0.012, mid.z] as [number, number, number], quat, railLen, rungZ };
   }, [from, to]);
 
-  const woodDark = "#5c3418";
-  const woodMid = "#8f5a2a";
-  const woodLight = "#c4894a";
+  const halfW = 0.15;
+  const t = 0.016; // paint-sheet thickness
 
   return (
-    <group>
-      {/* Soft ground shadow */}
-      <mesh position={[built.mid[0], 0.015, built.mid[2]]} quaternion={built.shadowQuat}>
-        <planeGeometry args={[built.halfW * 2.8, built.railLen * 0.92]} />
-        <meshBasicMaterial color="#000" transparent opacity={0.16} depthWrite={false} />
-      </mesh>
-
-      {/* Rails (rectangular timber) */}
-      {([built.leftPos, built.rightPos] as const).map((pos, i) => (
-        <group key={i} position={pos} quaternion={built.railQuat}>
-          <mesh castShadow>
-            <boxGeometry args={[0.06, 0.075, built.railLen]} />
-            <meshStandardMaterial color={woodDark} roughness={0.78} metalness={0.02} />
+    <group position={built.mid} quaternion={built.quat}>
+      {[-halfW, halfW].map((x) => (
+        <group key={x}>
+          <mesh position={[x, 0, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.085, t, built.railLen]} />
+            <meshStandardMaterial color={LADDER_EDGE} roughness={0.5} />
           </mesh>
-          {/* Highlight strip on top */}
-          <mesh position={[0, 0.028, 0]}>
-            <boxGeometry args={[0.032, 0.02, built.railLen * 0.97]} />
-            <meshStandardMaterial color={woodMid} roughness={0.62} metalness={0.02} />
+          <mesh position={[x, t * 0.6, 0]}>
+            <boxGeometry args={[0.062, t, built.railLen - 0.02]} />
+            <meshStandardMaterial color={LADDER_PAINT} roughness={0.45} />
           </mesh>
         </group>
       ))}
-
-      {/* Rungs + pegs */}
-      {built.rungs.map((r, i) => (
-        <group key={i}>
-          <mesh position={r.pos} quaternion={built.rungQuat} castShadow>
-            <cylinderGeometry args={[0.028, 0.028, built.halfW * 2 + 0.05, 12]} />
-            <meshStandardMaterial color={woodLight} roughness={0.55} metalness={0.03} />
+      {built.rungZ.map((z) => (
+        <group key={z}>
+          <mesh position={[0, t * 0.3, z]} castShadow>
+            <boxGeometry args={[halfW * 2, t, 0.06]} />
+            <meshStandardMaterial color={LADDER_PAINT} roughness={0.45} />
           </mesh>
-          <mesh position={r.leftPeg} castShadow>
-            <sphereGeometry args={[0.03, 10, 10]} />
-            <meshStandardMaterial color={woodDark} roughness={0.7} />
-          </mesh>
-          <mesh position={r.rightPeg} castShadow>
-            <sphereGeometry args={[0.03, 10, 10]} />
-            <meshStandardMaterial color={woodDark} roughness={0.7} />
-          </mesh>
+          {[-halfW, halfW].map((x) => (
+            <mesh key={x} position={[x, t * 1.3, z]}>
+              <cylinderGeometry args={[0.013, 0.013, 0.006, 10]} />
+              <meshStandardMaterial color="#5a3a12" roughness={0.4} metalness={0.4} />
+            </mesh>
+          ))}
         </group>
       ))}
     </group>
@@ -220,199 +247,75 @@ function snakeCurve(from: number, to: number, phase: number): THREE.CatmullRomCu
 }
 
 /**
- * Flattened, tapering body tube along the curve, lying on the board. Vertex colours give it
- * bands of `main`/`accent` on top and a lighter `belly` underneath.
+ * Outline of a flat cut-out snake in board coordinates: a pointed, slightly wider head at the
+ * head square, a slim body following the curve, tapering to a sharp tail.
  */
-function createBodyTube(
-  curve: THREE.CatmullRomCurve3,
-  skin: (typeof SNAKE_SKINS)[number],
-  tubular = 64,
-  radial = 10,
-): THREE.BufferGeometry {
-  const frames = curve.computeFrenetFrames(tubular, false);
-  const length = curve.getLength();
-  const main = new THREE.Color(skin.main);
-  const accent = new THREE.Color(skin.accent);
-  const belly = new THREE.Color(skin.belly);
-  const pos: number[] = [];
-  const col: number[] = [];
-  const idx: number[] = [];
+function snakeOutline(curve: THREE.CatmullRomCurve3): THREE.Shape {
+  const L = curve.getLength();
+  const start = curve.getPointAt(0);
+  const dir = curve.getTangentAt(0); // towards the tail
+  const f = new THREE.Vector2(-dir.x, -dir.z).normalize(); // head points away from the body
+  const n = new THREE.Vector2(-f.y, f.x);
+  const c = new THREE.Vector2(start.x, start.z);
+  const at = (along: number, across: number) => c.clone().addScaledVector(f, along).addScaledVector(n, across);
 
-  for (let i = 0; i <= tubular; i++) {
-    const t = i / tubular;
+  // head (local: along = towards the tip, across = sideways)
+  const headLeft = [at(0.2, 0), at(0.12, 0.07), at(0.02, 0.095), at(-0.08, 0.075)];
+  const headRight = [at(-0.08, -0.075), at(0.02, -0.095), at(0.12, -0.07)];
+
+  const left: THREE.Vector2[] = [];
+  const right: THREE.Vector2[] = [];
+  const steps = 90;
+  const tNeck = Math.min(0.2, 0.1 / L);
+  for (let i = 0; i <= steps; i++) {
+    const t = tNeck + (1 - tNeck) * (i / steps);
     const p = curve.getPointAt(t);
-    const T = frames.tangents[i];
-    const up = new THREE.Vector3(0, 1, 0);
-    let back = new THREE.Vector3().crossVectors(T, new THREE.Vector3().crossVectors(up, T)).normalize();
-    if (back.lengthSq() < 1e-6) back = frames.normals[i].clone();
-    const side = new THREE.Vector3().crossVectors(T, back).normalize();
-
-    // slim neck under the head, fullest around a quarter of the way, then a long taper to the tail tip
-    const radius =
-      t < 0.25
-        ? THREE.MathUtils.lerp(0.085, 0.11, t / 0.25)
-        : THREE.MathUtils.lerp(0.11, 0.012, Math.pow((t - 0.25) / 0.75, 1.15));
-    const band = Math.floor(t * length * 2.6) % 2 === 1;
-
-    for (let j = 0; j <= radial; j++) {
-      const ang = (j / radial) * Math.PI * 2;
-      const cos = Math.cos(ang);
-      const sin = Math.sin(ang);
-      const ry = radius * 0.6; // flattened top-to-bottom
-      pos.push(
-        p.x + cos * ry * back.x + sin * radius * side.x,
-        p.y + cos * ry * back.y + sin * radius * side.y,
-        p.z + cos * ry * back.z + sin * radius * side.z,
-      );
-      const c = cos < -0.35 ? belly : band ? accent : main;
-      col.push(c.r, c.g, c.b);
-    }
+    const tan = curve.getTangentAt(t);
+    const nn = new THREE.Vector2(-tan.z, tan.x).normalize();
+    // body half-width: slim neck, steady body, long taper to a point
+    const k = (t - tNeck) / (1 - tNeck);
+    const w = k < 0.55 ? THREE.MathUtils.lerp(0.055, 0.065, k / 0.55) : 0.065 * Math.pow((1 - k) / 0.45, 0.9);
+    const q = new THREE.Vector2(p.x, p.z);
+    left.push(q.clone().addScaledVector(nn, w));
+    right.push(q.clone().addScaledVector(nn, -w));
   }
-  for (let i = 0; i < tubular; i++) {
-    for (let j = 0; j < radial; j++) {
-      const a = i * (radial + 1) + j;
-      const b = a + radial + 1;
-      idx.push(a, b, a + 1, b, b + 1, a + 1);
-    }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  return geo;
+  // the body's "left" side is on the head's right, because the head faces the other way
+  const pts = [...headLeft, ...right, ...left.reverse(), ...headRight];
+  // shape space (x, y) maps to world (x, -z) once the mesh is laid flat
+  return new THREE.Shape(pts.map((v) => new THREE.Vector2(v.x, -v.y)));
 }
 
-const UNIT_SPHERE: [number, number, number] = [1, 20, 14];
-
-/**
- * A cartoon snake lying flat on the board: striped body from head square to tail square, and a
- * flattened head with googly eyes, rosy cheeks and a flicking forked tongue. The head sways a
- * little and the pupils look around (driven by SnakeTicker).
- */
-function Snake3D({
-  from,
-  to,
-  skin,
-  index,
-}: {
-  from: number;
-  to: number;
-  skin: (typeof SNAKE_SKINS)[number];
-  index: number;
-}) {
-  const headRef = useRef<THREE.Group>(null);
-  const tongueRef = useRef<THREE.Group>(null);
-  const pupilL = useRef<THREE.Mesh>(null);
-  const pupilR = useRef<THREE.Mesh>(null);
-
-  const { bodyGeo, place } = useMemo(() => {
+/** A flat painted cut-out snake lying on the board, with two small rivet eyes. */
+function Snake3D({ from, to, index }: { from: number; to: number; index: number }) {
+  const { geo, eyes } = useMemo(() => {
     const curve = snakeCurve(from, to, index * 1.37);
-    const bodyGeo = createBodyTube(curve, skin);
+    const geo = new THREE.ExtrudeGeometry(snakeOutline(curve), { depth: 0.022, bevelEnabled: false, curveSegments: 4 });
     const start = curve.getPointAt(0);
-    const tan = curve.getTangentAt(0.02);
-    // the head looks away from its own body
-    const face = new THREE.Vector3(-tan.x, 0, -tan.z);
-    if (face.lengthSq() < 1e-6) face.set(0, 0, 1);
-    else face.normalize();
-    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), face);
-    return { bodyGeo, place: { pos: [start.x, 0.06, start.z] as [number, number, number], quat } };
-  }, [from, to, index, skin]);
+    const dir = curve.getTangentAt(0);
+    const f = new THREE.Vector3(-dir.x, 0, -dir.z).normalize();
+    const n = new THREE.Vector3(-f.z, 0, f.x);
+    const eyes = [1, -1].map((side) =>
+      start.clone().setY(0).addScaledVector(f, 0.07).addScaledVector(n, side * 0.05).toArray() as [number, number, number],
+    );
+    return { geo, eyes };
+  }, [from, to, index]);
 
-  useEffect(() => () => bodyGeo.dispose(), [bodyGeo]);
-
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime + index * 2.3;
-    if (headRef.current) headRef.current.rotation.y = Math.sin(t * 1.1) * 0.22;
-    // tongue: out-in flicks for ~0.6s every ~2.8s
-    const cycle = t % 2.8;
-    const flick = cycle < 0.6 ? Math.sin((cycle / 0.6) * Math.PI) : 0;
-    if (tongueRef.current) tongueRef.current.scale.set(1, 1, 0.001 + flick);
-    // pupils drift around inside the eyes
-    const lx = Math.sin(t * 0.7) * 0.022;
-    const lz = Math.cos(t * 0.9) * 0.018;
-    pupilL.current?.position.set(-0.085 + lx, 0.205, 0.165 + lz);
-    pupilR.current?.position.set(0.085 + lx, 0.205, 0.165 + lz);
-  });
-
-  const eye = (x: number, ref: RefObject<THREE.Mesh | null>) => (
-    <>
-      <mesh position={[x, 0.175, 0.13]} scale={0.072}>
-        <sphereGeometry args={UNIT_SPHERE} />
-        <meshStandardMaterial color="#ffffff" roughness={0.25} />
-      </mesh>
-      <mesh ref={ref} position={[x, 0.205, 0.165]} scale={0.036}>
-        <sphereGeometry args={UNIT_SPHERE} />
-        <meshStandardMaterial color="#111827" roughness={0.2} />
-      </mesh>
-    </>
-  );
+  useEffect(() => () => geo.dispose(), [geo]);
+  const paint = SNAKE_PAINTS[index % SNAKE_PAINTS.length];
 
   return (
     <group>
-      <mesh geometry={bodyGeo}>
-        <meshStandardMaterial vertexColors roughness={0.5} metalness={0.05} />
+      <mesh geometry={geo} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]} castShadow receiveShadow>
+        <meshStandardMaterial color={paint} roughness={0.35} metalness={0.05} />
       </mesh>
-
-      <group position={place.pos} quaternion={place.quat}>
-        <group ref={headRef}>
-          {/* flattened head resting on the board */}
-          <mesh position={[0, 0.07, 0.07]} scale={[0.2, 0.1, 0.25]}>
-            <sphereGeometry args={UNIT_SPHERE} />
-            <meshStandardMaterial color={skin.main} roughness={0.45} metalness={0.05} />
-          </mesh>
-          {/* lighter chin */}
-          <mesh position={[0, 0.04, 0.12]} scale={[0.15, 0.06, 0.18]}>
-            <sphereGeometry args={UNIT_SPHERE} />
-            <meshStandardMaterial color={skin.belly} roughness={0.55} />
-          </mesh>
-          {eye(-0.085, pupilL)}
-          {eye(0.085, pupilR)}
-          {/* rosy cheeks */}
-          {[-0.15, 0.15].map((x) => (
-            <mesh key={x} position={[x, 0.1, 0.17]} scale={[0.04, 0.02, 0.035]}>
-              <sphereGeometry args={UNIT_SPHERE} />
-              <meshStandardMaterial color="#f9a8d4" roughness={0.6} />
-            </mesh>
-          ))}
-          {/* nostrils */}
-          {[-0.035, 0.035].map((x) => (
-            <mesh key={x} position={[x, 0.135, 0.3]} scale={0.012}>
-              <sphereGeometry args={UNIT_SPHERE} />
-              <meshStandardMaterial color={skin.accent} />
-            </mesh>
-          ))}
-          {/* forked tongue, scaled along z to flick in and out */}
-          <group ref={tongueRef} position={[0, 0.05, 0.3]}>
-            <mesh position={[0, 0, 0.07]}>
-              <boxGeometry args={[0.022, 0.008, 0.14]} />
-              <meshStandardMaterial color="#e11d48" />
-            </mesh>
-            {[-1, 1].map((d) => (
-              <mesh key={d} position={[d * 0.016, 0, 0.16]} rotation={[0, d * 0.45, 0]}>
-                <boxGeometry args={[0.016, 0.008, 0.06]} />
-                <meshStandardMaterial color="#e11d48" />
-              </mesh>
-            ))}
-          </group>
-        </group>
-      </group>
+      {eyes.map((p, i) => (
+        <mesh key={i} position={[p[0], 0.03, p[2]]}>
+          <cylinderGeometry args={[0.014, 0.014, 0.008, 10]} />
+          <meshStandardMaterial color="#e8dcc0" roughness={0.3} metalness={0.3} />
+        </mesh>
+      ))}
     </group>
   );
-}
-
-/**
- * The canvas only draws on demand; while snakes are on the board this asks for ~20 frames a
- * second so their heads, eyes and tongues can move. Skipped for reduced-motion users.
- */
-function SnakeTicker() {
-  const invalidate = useThree((s) => s.invalidate);
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const id = window.setInterval(() => invalidate(), 50);
-    return () => window.clearInterval(id);
-  }, [invalidate]);
-  return null;
 }
 
 const Snake3DMemo = memo(Snake3D);
@@ -565,7 +468,6 @@ function Tokens({ players, currentId }: { players: Token[]; currentId: number | 
 
 /** Board / snakes / lights — independent of token steps so room ticks don’t rebuild them. */
 const StaticDecor = memo(function StaticDecor() {
-  const theme = useBoardTheme();
 
   return (
     <>
@@ -586,19 +488,17 @@ const StaticDecor = memo(function StaticDecor() {
       <pointLight position={[-8, 6, -6]} intensity={0.45} color="#22d3ee" />
       <hemisphereLight args={["#94a3b8", "#020617", 0.4]} />
 
-      <BoardSurface theme={theme} />
+      <BoardSurface />
 
       {Object.entries(LADDERS).map(([from, to]) => (
         <Ladder3DMemo key={`l${from}`} from={+from} to={to} />
       ))}
-      <SnakeTicker />
       <Suspense fallback={null}>
         {Object.entries(SNAKES).map(([from, to], i) => (
           <Snake3DMemo
             key={`s${from}`}
             from={+from}
             to={to}
-            skin={SNAKE_SKINS[+from] ?? SNAKE_SKINS[99]!}
             index={i}
           />
         ))}

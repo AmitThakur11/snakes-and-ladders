@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Board, { ThemePicker } from "./Board";
+import Board from "./Board";
 import Avatar from "./Avatar";
 import Dice from "./Dice";
 import BlastHistory, { type BlastEvent } from "./VolcanoBurst";
@@ -306,8 +306,6 @@ export default function Game({
       </div>
 
       <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto lg:w-80 lg:max-h-full">
-        <ThemePicker />
-
         <div id={DICE_SECTION_ID} className="ui-panel p-5">
           {finished ? (
             <div className="text-center">

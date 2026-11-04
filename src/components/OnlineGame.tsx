@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Board, { ThemePicker, Token } from "./Board";
+import Board, { Token } from "./Board";
 import Avatar from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
 import Dice from "./Dice";
@@ -388,8 +388,6 @@ export default function OnlineGame({ code }: { code: string }) {
       </div>
 
       <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto lg:w-80 lg:max-h-full">
-        <ThemePicker />
-
         <div id={DICE_SECTION_ID} className="ui-panel p-5">
           {banner}
           {showPodium ? (
